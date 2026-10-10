@@ -121,6 +121,7 @@ function resetIn(iso: string | undefined): string | null {
   const mins = Math.ceil(ms / 60_000)
   const h = Math.floor(mins / 60)
   const m = mins % 60
+  if (h >= 24) return `${Math.floor(h / 24)}д ${h % 24}ч`
   return h > 0 ? `${h}ч ${m}м` : `${m}м`
 }
 
@@ -551,7 +552,7 @@ export const register: Register = on => {
                     <Text dimColor>{w.kind === 'five_hour' ? '5 часов ' : w.kind === 'seven_day' ? 'неделя ' : `${w.kind} `}</Text>
                     <Text color={levelColor(w.percentUsed)}>{bar(w.percentUsed)}</Text>
                     <Text bold> {Math.round(w.percentUsed)}%</Text>
-                    {w.kind === 'five_hour' && resetIn(w.resetsAt) !== null && <Text dimColor> · сброс через {resetIn(w.resetsAt)}</Text>}
+                    {resetIn(w.resetsAt) !== null && <Text dimColor> · сброс через {resetIn(w.resetsAt)}</Text>}
                   </Text>
                 ))}
               </Box>

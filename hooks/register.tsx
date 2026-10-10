@@ -130,6 +130,19 @@ async function refreshLimits($: EngineInterface): Promise<void> {
   await update($, limitsAtom, () => limits)
 }
 
+type Lifetime = {
+  cal: { calUsd: number; cal5h: number; cal7d: number }
+  life: { saved: number; missed: number }
+}
+
+async function persist($: EngineInterface, l: Ledger): Promise<void> {
+  const value: Lifetime = {
+    cal: { calUsd: l.calUsd ?? 0, cal5h: l.cal5h ?? 0, cal7d: l.cal7d ?? 0 },
+    life: { saved: l.life?.saved ?? 0, missed: l.life?.missed ?? 0 },
+  }
+  await $.store.set('lifetime', value)
+}
+
 const cache = new Map<string, Advice>()
 
 async function askHaiku($: EngineInterface, text: string): Promise<void> {
@@ -203,6 +216,9 @@ export const register: Register = on => {
     await $.command.register({ name: 'spend', description: 'Где ушли токены и лимиты этой сессии' })
     await $.command.register({ name: 'advisor', description: 'Показать/скрыть подсказку модели над вводом' })
     await refreshLimits($)
+    // A new chat starts from what earlier chats measured: calibration and lifetime savings.
+    const kept = (await $.store.get('lifetime')) as Lifetime | null | undefined
+    if (kept) await update($, ledgerAtom, l => ({ ...l, ...kept.cal, life: kept.life }))
 
     return next(e)
   })
@@ -295,7 +311,13 @@ export const register: Register = on => {
       const saved = actual !== null && base !== null && base > actual ? base - actual : 0
       const missed = actual !== null && advised !== null && advised < actual ? actual - advised : 0
       if (saved > 0 || missed > 0) {
-        await update($, ledgerAtom, l => ({ ...l, saved: (l.saved ?? 0) + saved, missed: (l.missed ?? 0) + missed }))
+        await update($, ledgerAtom, l => ({
+          ...l,
+          saved: (l.saved ?? 0) + saved,
+          missed: (l.missed ?? 0) + missed,
+          life: { saved: (l.life?.saved ?? 0) + saved, missed: (l.life?.missed ?? 0) + missed },
+        }))
+        await persist($, await read($, ledgerAtom))
       }
     }
     const names = e.agentId === undefined ? result.toolUses.map(t => t.name) : ['Agent (субагент)']
@@ -334,6 +356,7 @@ export const register: Register = on => {
           cal5h: (l.cal5h ?? 0) + d5,
           cal7d: (l.cal7d ?? 0) + Math.max(0, d7 ?? 0),
         }))
+        await persist($, await read($, ledgerAtom))
       }
       const usd = limits.usd === null ? 0 : Math.max(0, limits.usd - done.usdStart)
       await update($, ledgerAtom, l => ({
@@ -388,6 +411,13 @@ export const register: Register = on => {
     }
     const setPick = (patch: Partial<Choice>) => update($, choiceAtom, () => ({ ...base, ...patch }))
 
+    const life = ledger.life ?? { saved: 0, missed: 0 }
+    const label = (text: string) => (
+      <Box width={11}>
+        <Text bold color={PINK}>{text}</Text>
+      </Box>
+    )
+
     return (
       <Box flexDirection="column">
         {advice === null && !e.props.isWorking && (
@@ -397,52 +427,54 @@ export const register: Register = on => {
           </Box>
         )}
         {advice !== null && !e.props.isWorking && (
-          <Box flexDirection="column">
+          <Box flexDirection="column" borderStyle="round" borderColor="#d0a050" paddingX={1}>
             <Box gap={2}>
               <Text bold>💡 Совет</Text>
               <Text>
-                <Text dimColor>Модель </Text>
+                <Text dimColor>модель </Text>
                 <Text bold color={MODEL_COLOR[advice.model]}>{short(advice.model)}</Text>
               </Text>
               <Text>
-                <Text dimColor>Сила </Text>
+                <Text dimColor>сила </Text>
                 <Text color="#d0a050">{dots(advice.effort)}</Text>
                 <Text> {EFFORT_RU[advice.effort]}</Text>
               </Text>
               <Text>
-                <Text dimColor>Режим </Text>
+                <Text dimColor>режим </Text>
                 <Text bold>{MODE_HINT[advice.mode]}</Text>
                 {advice.fast ? <Text color="#d0a050"> ⚡fast</Text> : null}
               </Text>
+            </Box>
+            <Text dimColor>
+              ↳ {advice.reason} · {advice.source === 'haiku' ? 'оценил Haiku' : 'по ключевым словам'}
+            </Text>
+            <Box gap={2}>
               <Button
                 key="apply"
                 label="Применить"
                 onPress={() => apply($, { model: advice.model, effort: advice.effort, mode: advice.mode, fast: advice.fast, isPersistent: false })}
               />
-              <Button key="recheck" label="↻" plain onPress={() => checkPrompt($)} />
-              <Button key="own" label={isEditing ? 'Готово' : 'Своё'} onPress={() => update($, editingAtom, v => !v)} />
+              <Button key="recheck" label="↻ Перепроверить" plain onPress={() => checkPrompt($)} />
+              <Button key="own" label={isEditing ? 'Готово' : 'Своё…'} plain onPress={() => update($, editingAtom, v => !v)} />
             </Box>
-            <Text dimColor>
-              {'   '}↳ {advice.reason} · {advice.source === 'haiku' ? 'оценил Haiku' : 'по ключевым словам'}
-            </Text>
           </Box>
         )}
         {isEditing && !e.props.isWorking && (
-          <Box flexDirection="column">
+          <Box flexDirection="column" paddingX={1}>
             <Box gap={1}>
-              <Text dimColor>модель</Text>
+              <Box width={8}><Text dimColor>модель</Text></Box>
               {MODELS.map(m => (
                 <Button key={`m-${m}`} label={m === base.model ? `[${short(m)}]` : short(m)} plain onPress={() => setPick({ model: m })} />
               ))}
             </Box>
             <Box gap={1}>
-              <Text dimColor>сила</Text>
+              <Box width={8}><Text dimColor>сила</Text></Box>
               {EFFORTS.map(f => (
                 <Button key={`f-${f}`} label={f === base.effort ? `[${f}]` : f} plain onPress={() => setPick({ effort: f })} />
               ))}
             </Box>
             <Box gap={1}>
-              <Text dimColor>режим</Text>
+              <Box width={8}><Text dimColor>режим</Text></Box>
               {MODES.map(m => (
                 <Button key={`r-${m}`} label={m === base.mode ? `[${MODE_HINT[m]}]` : MODE_HINT[m]} plain onPress={() => setPick({ mode: m })} />
               ))}
@@ -450,60 +482,57 @@ export const register: Register = on => {
           </Box>
         )}
         {choice !== null && (
-          <Box gap={1}>
+          <Box gap={2} paddingX={1}>
             <Text color="success">
-              ✔ {short(choice.model)} · {choice.effort} {choice.isPersistent ? '(закреплено)' : '(на 1 ход)'}
+              ✔ Выбрано: {short(choice.model)} · {choice.effort} {choice.isPersistent ? '(закреплено)' : '(на 1 ход)'}
             </Text>
             <Button key="pin" label={choice.isPersistent ? 'Открепить' : 'Закрепить'} plain onPress={() => setPick({ isPersistent: !choice.isPersistent })} />
             <Button key="reset" label="Сбросить" plain onPress={() => update($, choiceAtom, () => null)} />
           </Box>
         )}
         {(limits.windows.length > 0 || limits.context !== null || limits.usd !== null) && (
-          <Box gap={3}>
-            <Box gap={2}>
-              <Text bold color={PINK}>
-                ▌Этот чат
-              </Text>
+          <Box flexDirection="column" borderStyle="round" borderColor="#555555" paddingX={1}>
+            <Box gap={3}>
+              {label('Этот чат')}
               {limits.context !== null && (
                 <Text>
-                  <Text color={PINK}>Контекст </Text>
-                  <Text color={PINK}>{bar(limits.context)}</Text>
-                  <Text bold color={PINK}> {Math.round(limits.context)}%</Text>
+                  <Text dimColor>контекст </Text>
+                  <Text color={levelColor(limits.context)}>{bar(limits.context)}</Text>
+                  <Text bold> {Math.round(limits.context)}%</Text>
                 </Text>
               )}
               <Text>
-                <Text color={PINK}>Токены </Text>
-                <Text bold color={PINK}>{fmt(chatTokens)}</Text>
+                <Text dimColor>токены </Text>
+                <Text bold>{fmt(chatTokens)}</Text>
               </Text>
-              {(ledger.saved ?? 0) > 0 && (
+              {limits.usd !== null && (
                 <Text>
-                  <Text color="#5fb878">💰 сэкономлено </Text>
-                  <Text bold color="#5fb878">{amount(ledger.saved ?? 0)}</Text>
+                  <Text dimColor>стоимость </Text>
+                  <Text bold>${limits.usd.toFixed(2)}</Text>
                 </Text>
               )}
-              {(ledger.missed ?? 0) > 0 && (
-                <Text>
-                  <Text color="#e06060">упущено </Text>
-                  <Text bold color="#e06060">{amount(ledger.missed ?? 0)}</Text>
-                </Text>
-              )}
-              {limits.usd !== null && limits.usd > 0 && (
-                <Text>
-                  <Text color={PINK}>Стоимость </Text>
-                  <Text bold color={PINK}>${limits.usd.toFixed(2)}</Text>
-                </Text>
-              )}
-              <Text dimColor>/spend</Text>
+              <Text dimColor>/spend — подробности</Text>
             </Box>
-            <Box flexGrow={1} />
+            <Box gap={3}>
+              {label('Экономия')}
+              <Text>
+                <Text color="#5fb878">💰 сэкономлено </Text>
+                <Text bold color="#5fb878">{amount(ledger.saved ?? 0)}</Text>
+              </Text>
+              <Text>
+                <Text color="#e06060">упущено </Text>
+                <Text bold color="#e06060">{amount(ledger.missed ?? 0)}</Text>
+              </Text>
+              <Text dimColor>
+                за всё время: +{amount(life.saved)} / −{amount(life.missed)}
+              </Text>
+            </Box>
             {limits.windows.length > 0 && (
-              <Box gap={2}>
-                <Text bold dimColor>
-                  Общее ▐
-                </Text>
+              <Box gap={3}>
+                {label('Лимиты')}
                 {limits.windows.map(w => (
                   <Text>
-                    <Text dimColor>{w.kind === 'five_hour' ? 'Лимит 5ч ' : w.kind === 'seven_day' ? 'Неделя ' : `${w.kind} `}</Text>
+                    <Text dimColor>{w.kind === 'five_hour' ? '5 часов ' : w.kind === 'seven_day' ? 'неделя ' : `${w.kind} `}</Text>
                     <Text color={levelColor(w.percentUsed)}>{bar(w.percentUsed)}</Text>
                     <Text bold> {Math.round(w.percentUsed)}%</Text>
                   </Text>

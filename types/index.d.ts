@@ -45,6 +45,8 @@ export type Ledger = {
   // $ saved by running cheaper than the chat's own model, and $ that a shown cheaper advice could have saved but was not applied.
   saved?: number
   missed?: number
+  // The same, summed over every chat (kept in $.store), so a new chat does not start from nothing.
+  life?: { saved: number; missed: number }
   // Calibration of $ against subscription limits: API-priced $ of measured turns and the limit % they moved.
   calUsd?: number
   cal5h?: number

@@ -15,26 +15,26 @@ Changes to the mod take effect in a new session (a new chat).
 
 ## What you see
 
-Two blocks sit above the prompt box. The interface is in Russian.
+Two blocks sit above the prompt box. The interface is available in Russian and English: the small `EN` / `RU` button in the «This chat» row (or the `/lang` command) switches it, and the choice is remembered across chats. Russian is the default.
 
-**Advice.** The «🔍 Проверить промпт» (Check prompt) button rates what you typed and shows the model, effort (●○○○○), mode and the reason.
-- «Применить» (Apply): the choice applies to the next turn.
-- «Своё…» (Custom): pick model, effort and mode by hand.
-- «Закрепить» (Pin): the choice applies until the session ends. «Сбросить» (Reset) clears it.
+**Advice.** The «🔍 Check prompt» button rates what you typed and shows the model, effort (●○○○○), mode and the reason.
+- «Apply»: the choice applies to the next turn.
+- «Custom…»: pick model, effort and mode by hand.
+- «Pin»: the choice applies until the session ends. «Reset» clears it.
 - The first message of a chat gets a model picked automatically.
 
 **Stats.** Four rows:
 
 | Row | What it shows |
 | --- | --- |
-| Этот чат (This chat) | context fill, tokens, cost |
-| Экономия (Savings) | saved and missed, for this chat and all time |
-| Лимиты (Limits) | 5-hour and weekly limits, time until reset (`2ч 15м`, `3д 4ч`); refreshes itself every 30 seconds |
-| Граф (Graph) | a button that runs `graphify update .` for the session folder |
+| This chat | context fill, tokens, cost |
+| Savings | saved and missed, for this chat and all time |
+| Limits | 5-hour and weekly limits, time until reset (`2h 15m`, `3d 4h`); refreshes itself every 30 seconds |
+| Graph | a button that runs `graphify update .` for the session folder |
 
 **`/spend` pane.** Spending by model, by tool, the most expensive turns, and what the advisor itself used.
 
-Commands: `/spend` opens the pane, `/advisor` hides or shows the advice.
+Commands: `/spend` opens the pane, `/advisor` hides or shows the advice, `/lang` switches the language.
 
 ## How the model is chosen
 
@@ -64,11 +64,11 @@ Words like "quick", "asap", `быстро`, `срочно` turn on fast mode (`/
 
 **When Haiku is asked.** Only when the keywords give no confident answer (confidence below 0.6): a very short or vague edit, or a long text with no task. A confident heuristic answer is never overridden and costs no tokens, so the same prompt always gets the same advice.
 
-**Model switch warning.** The context cache belongs to a model. Switching models in a long chat (30k+ tokens of context) writes the whole context to the cache again, and the first turn can cost more than the switch saves. The advice then carries a note such as «смена модели пересчитает кэш 120k ток. (+$0.28 на 1-м ходе)» ("switching re-writes 120k tokens of cache, +$0.28 on the first turn"). In a long chat, starting a new chat is cheaper.
+**Model switch warning.** The context cache belongs to a model. Switching models in a long chat (30k+ tokens of context) writes the whole context to the cache again, and the first turn can cost more than the switch saves. The advice then carries a note such as "switching re-writes the 120k token cache (+$0.28 on the 1st turn)". In a long chat, starting a new chat is cheaper.
 
 ## Graph (graphify)
 
-- The button in the «Граф» row runs `graphify update .` in the session folder. It only parses code: no LLM, no tokens. Requires graphify (the `graphify` command on PATH).
+- The button in the «Graph» row runs `graphify update .` in the session folder. It only parses code: no LLM, no tokens. Requires graphify (the `graphify` command on PATH).
 - If the folder already has a graph (`graphify-out/graph.json`), it updates itself at the end of any turn in which Claude edited files with Edit or Write.
 - Turns without edits leave the graph alone. A new graph is never built automatically, only with the button.
 - Edits made through Bash (scripts, `sed`) are not noticed.
@@ -108,6 +108,7 @@ In short: the mod shows where tokens and limits go and nudges you toward a cheap
 | --- | --- |
 | `hooks/register.tsx` | logic, blocks above the prompt, the `/spend` pane |
 | `hooks/classify.ts` | model selection rules and Haiku reply parsing |
+| `hooks/i18n.ts` | Russian / English switch used by every on-screen string |
 | `hooks/advisor.test.ts` | tests |
 | `types/index.d.ts` | state types |
 | `.claude-plugin/` | manifest and marketplace |

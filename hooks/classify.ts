@@ -1,4 +1,5 @@
 import type { Advice, Effort, Mode, ModelName } from '../types'
+import { tr } from './i18n'
 
 // Below this the heuristic is unsure and Haiku is asked (once, on demand).
 export const ASK_HAIKU_BELOW = 0.6
@@ -36,28 +37,28 @@ export function classify(raw: string): Advice {
   let confidence: number
 
   if (ARCH.test(text)) {
-    ;[model, effort, mode, reason, confidence] = ['opus', 'high', 'plan', 'архитектура / исследование', 0.85]
+    ;[model, effort, mode, reason, confidence] = ['opus', 'high', 'plan', tr('архитектура / исследование', 'architecture / research'), 0.85]
   } else if (MULTI.test(text) || steps >= 3) {
-    ;[model, effort, mode, reason, confidence] = ['sonnet', 'medium', 'plan', steps >= 3 ? `несколько шагов (${steps})` : 'многошаговая задача', 0.85]
+    ;[model, effort, mode, reason, confidence] = ['sonnet', 'medium', 'plan', steps >= 3 ? tr(`несколько шагов (${steps})`, `several steps (${steps})`) : tr('многошаговая задача', 'multi-step task'), 0.85]
   } else if (edit) {
     // Cheapest that copes: one small, clear edit that needs no reading of other code stays on Haiku.
     const small = files <= 1 && !hasCode && text.length < 200 && editVerbs <= 1 && !analysis && !bug && !loop
     if (small) {
-      ;[model, effort, mode, reason] = ['haiku', 'medium', 'acceptEdits', 'маленькая правка']
+      ;[model, effort, mode, reason] = ['haiku', 'medium', 'acceptEdits', tr('маленькая правка', 'small edit')]
     } else {
-      ;[model, effort, mode, reason] = ['sonnet', 'medium', 'acceptEdits', bug ? 'исправление ошибки' : analysis ? 'разобраться и изменить' : 'правка кода']
+      ;[model, effort, mode, reason] = ['sonnet', 'medium', 'acceptEdits', bug ? tr('исправление ошибки', 'bug fix') : analysis ? tr('разобраться и изменить', 'understand, then change') : tr('правка кода', 'code edit')]
     }
     confidence = text.length < 25 && files === 0 ? 0.5 : 0.85
   } else if (bug) {
     // Finding why something fails means reading code: not a job for the cheapest model.
-    ;[model, effort, mode, reason, confidence] = ['sonnet', 'medium', 'default', 'разбор ошибки', 0.8]
+    ;[model, effort, mode, reason, confidence] = ['sonnet', 'medium', 'default', tr('разбор ошибки', 'diagnosing an error'), 0.8]
   } else if (analysis) {
     ;[model, effort, mode] = files > 0 || hasCode ? (['sonnet', 'low', 'default'] as const) : (['haiku', 'medium', 'default'] as const)
-    ;[reason, confidence] = [model === 'sonnet' ? 'анализ кода' : 'проверка / сравнение', 0.7]
+    ;[reason, confidence] = [model === 'sonnet' ? tr('анализ кода', 'code analysis') : tr('проверка / сравнение', 'check / comparison'), 0.7]
   } else if (ASK.test(text) || text.length < 300) {
-    ;[model, effort, mode, reason, confidence] = ['haiku', 'low', 'default', 'вопрос / обсуждение', ASK.test(text) ? 0.85 : 0.7]
+    ;[model, effort, mode, reason, confidence] = ['haiku', 'low', 'default', tr('вопрос / обсуждение', 'question / discussion'), ASK.test(text) ? 0.85 : 0.7]
   } else {
-    ;[model, effort, mode, reason, confidence] = ['sonnet', 'low', 'default', 'длинный запрос без явной задачи', 0.45]
+    ;[model, effort, mode, reason, confidence] = ['sonnet', 'low', 'default', tr('длинный запрос без явной задачи', 'long request with no clear task'), 0.45]
   }
 
   const notes = [reason]
@@ -65,16 +66,16 @@ export function classify(raw: string): Advice {
   if (loop) {
     if (model === 'haiku') model = 'sonnet'
     effort = bump(effort)
-    notes.push('прошлая попытка не помогла')
+    notes.push(tr('прошлая попытка не помогла', 'previous attempt failed'))
   }
   if (text.length > 1500 || files >= 4) {
     if (model === 'haiku') model = 'sonnet'
     effort = bump(effort)
-    notes.push(files >= 4 ? `${files} файлов` : 'длинный промпт')
+    notes.push(files >= 4 ? tr(`${files} файлов`, `${files} files`) : tr('длинный промпт', 'long prompt'))
   }
   if (hasCode && model === 'haiku') {
     model = 'sonnet'
-    notes.push('есть код')
+    notes.push(tr('есть код', 'has code'))
   }
   if (text.length < 15) confidence = Math.min(confidence, 0.4)
 

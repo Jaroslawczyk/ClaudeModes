@@ -1,8 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Advice, Choice, Effort, GraphState, Ledger, Limits, Mode, ModelName, Tokens } from '../types'
+import type { Advice, Choice, Effort, GraphState, Lang, Ledger, Limits, Mode, ModelName, Tokens } from '../types'
 import { ADVISOR_PROMPT, ASK_HAIKU_BELOW, classify, parseAdvice } from './classify'
+import { getLang, setLang, tr } from './i18n'
 
 const PANE = 'model-advisor-spend'
 
@@ -15,7 +16,9 @@ const MODELS: ModelName[] = ['haiku', 'sonnet', 'opus']
 const EFFORTS: Effort[] = ['low', 'medium', 'high', 'xhigh', 'max']
 const MODES: Mode[] = ['default', 'acceptEdits', 'plan', 'auto']
 const MODE_HINT: Record<Mode, string> = {
-  default: 'обычный',
+  get default() {
+    return tr('обычный', 'default')
+  },
   acceptEdits: 'accept edits',
   plan: 'plan mode',
   auto: 'auto',
@@ -28,6 +31,7 @@ const choiceAtom = atom({ plugin: 'model-advisor', key: 'choice' } as const, nul
 const editingAtom = atom({ plugin: 'model-advisor', key: 'isEditing' } as const, false)
 const hiddenAtom = atom({ plugin: 'model-advisor', key: 'isHidden' } as const, false)
 const ledgerAtom = atom({ plugin: 'model-advisor', key: 'ledger' } as const, EMPTY_LEDGER)
+const langAtom = atom({ plugin: 'model-advisor', key: 'lang' } as const, 'ru' as Lang)
 const limitsAtom = atom({ plugin: 'model-advisor', key: 'limits' } as const, { usd: null, context: null, windows: [] })
 const graphAtom = atom({ plugin: 'model-advisor', key: 'graph' } as const, { status: 'idle', message: '' } as GraphState)
 
@@ -42,7 +46,18 @@ async function hasGraph($: EngineInterface): Promise<boolean> {
   }
 }
 
-const GRAPH_RU: Record<GraphState['status'], string> = { idle: '', running: 'строю граф', done: 'граф обновлён', failed: 'ошибка' }
+const GRAPH_RU: Record<GraphState['status'], string> = {
+  idle: '',
+  get running() {
+    return tr('строю граф', 'building graph')
+  },
+  get done() {
+    return tr('граф обновлён', 'graph updated')
+  },
+  get failed() {
+    return tr('ошибка', 'error')
+  },
+}
 
 // One click: AST-only graphify rebuild of the session's folder (no LLM, no token cost).
 async function buildGraph($: EngineInterface, isAuto = false): Promise<void> {
@@ -53,10 +68,10 @@ async function buildGraph($: EngineInterface, isAuto = false): Promise<void> {
     const ok = r.exitCode === 0
     const tail = (ok ? r.stdout : r.stderr || r.stdout).trim().split('\n').slice(-1)[0] ?? ''
     await update($, graphAtom, () => ({ status: ok ? 'done' : 'failed', message: tail.slice(0, 120) }))
-    if (!isAuto || !ok) $.ui.toast(ok ? 'graphify: граф обновлён' : 'graphify: ошибка сборки')
+    if (!isAuto || !ok) $.ui.toast(ok ? tr('graphify: граф обновлён', 'graphify: graph updated') : tr('graphify: ошибка сборки', 'graphify: build failed'))
   } catch (err) {
     await update($, graphAtom, () => ({ status: 'failed', message: String(err).slice(0, 120) }))
-    $.ui.toast('graphify: не запустился (есть ли graphify в PATH?)')
+    $.ui.toast(tr('graphify: не запустился (есть ли graphify в PATH?)', 'graphify did not start (is graphify on PATH?)'))
   }
 }
 
@@ -126,7 +141,23 @@ export function priceOf(model: string, t: Tokens): number | null {
   return (t.input * i + t.output * o + t.cacheRead * cr + t.cacheWrite * cw) / 1_000_000
 }
 const MODEL_COLOR: Record<ModelName, string> = { haiku: '#5fb878', sonnet: '#6a9fe0', opus: '#c27ae0' }
-const EFFORT_RU: Record<Effort, string> = { low: 'низкая', medium: 'средняя', high: 'высокая', xhigh: 'очень высокая', max: 'максимум' }
+const EFFORT_RU: Record<Effort, string> = {
+  get low() {
+    return tr('низкая', 'low')
+  },
+  get medium() {
+    return tr('средняя', 'medium')
+  },
+  get high() {
+    return tr('высокая', 'high')
+  },
+  get xhigh() {
+    return tr('очень высокая', 'very high')
+  },
+  get max() {
+    return tr('максимум', 'max')
+  },
+}
 
 export function bar(percent: number, width = 10): string {
   const filled = Math.max(0, Math.min(width, Math.round((percent / 100) * width)))
@@ -147,16 +178,17 @@ function resetIn(iso: string | undefined): string | null {
   if (!iso) return null
   const ms = Date.parse(iso) - Date.now()
   if (Number.isNaN(ms)) return null
-  if (ms <= 0) return 'сейчас'
+  if (ms <= 0) return tr('сейчас', 'now')
   const mins = Math.ceil(ms / 60_000)
   const h = Math.floor(mins / 60)
   const m = mins % 60
-  if (h >= 24) return `${Math.floor(h / 24)}д ${h % 24}ч`
-  return h > 0 ? `${h}ч ${m}м` : `${m}м`
+  const [d, hh, mm] = [tr('д', 'd'), tr('ч', 'h'), tr('м', 'm')]
+  if (h >= 24) return `${Math.floor(h / 24)}${d} ${h % 24}${hh}`
+  return h > 0 ? `${h}${hh} ${m}${mm}` : `${m}${mm}`
 }
 
 function windowLabel(kind: string): string {
-  return kind === 'five_hour' ? '5ч' : kind === 'seven_day' ? '7д' : kind
+  return kind === 'five_hour' ? tr('5ч', '5h') : kind === 'seven_day' ? tr('7д', '7d') : kind
 }
 
 function sameAdvice(a: Advice | null, b: Advice | null): boolean {
@@ -198,7 +230,7 @@ async function withSwitchCost($: EngineInterface, advice: Advice): Promise<Advic
   const stay = (tokens * PRICES[from][2]) / 1_000_000
   const move = (tokens * PRICES[advice.model][3]) / 1_000_000
   if (move - stay < 0.03) return advice
-  return { ...advice, reason: `${advice.reason} · ⚠ смена модели пересчитает кэш ${fmt(tokens)} ток. (+$${(move - stay).toFixed(2)} на 1-м ходе)` }
+  return { ...advice, reason: `${advice.reason} · ⚠ ${tr(`смена модели пересчитает кэш ${fmt(tokens)} ток. (+$${(move - stay).toFixed(2)} на 1-м ходе)`, `switching re-writes the ${fmt(tokens)} token cache (+$${(move - stay).toFixed(2)} on the 1st turn)`)}` }
 }
 
 async function askHaiku($: EngineInterface, text: string): Promise<void> {
@@ -234,7 +266,7 @@ let draft = ''
 async function checkPrompt($: EngineInterface): Promise<void> {
   const text = draft.trim()
   if (text.length < 2 || text.startsWith('/')) {
-    $.ui.toast('Сначала напишите промпт — потом нажмите «Проверить»')
+    $.ui.toast(tr('Сначала напишите промпт — потом нажмите «Проверить»', 'Type a prompt first, then press Check'))
     return
   }
   judged = text
@@ -248,11 +280,18 @@ async function checkPrompt($: EngineInterface): Promise<void> {
   }
 }
 
+async function switchLang($: EngineInterface): Promise<void> {
+  const next: Lang = getLang() === 'ru' ? 'en' : 'ru'
+  setLang(next)
+  await update($, langAtom, () => next)
+  await $.store.set('lang', next)
+}
+
 async function apply($: EngineInterface, choice: Choice): Promise<void> {
   await update($, choiceAtom, () => choice)
-  const tips = [`Модель ${short(choice.model)} · ${choice.effort} применены к следующему ходу`]
-  if (choice.mode !== 'default') tips.push(`режим ${MODE_HINT[choice.mode]}: Shift+Tab`)
-  if (choice.fast) tips.push('быстрый режим: /fast')
+  const tips = [tr(`Модель ${short(choice.model)} · ${choice.effort} применены к следующему ходу`, `Model ${short(choice.model)} · ${choice.effort} applied to the next turn`)]
+  if (choice.mode !== 'default') tips.push(tr(`режим ${MODE_HINT[choice.mode]}: Shift+Tab`, `mode ${MODE_HINT[choice.mode]}: Shift+Tab`))
+  if (choice.fast) tips.push(tr('быстрый режим: /fast', 'fast mode: /fast'))
   $.ui.toast(tips.join(' · '), { timeoutMs: 6000 })
 }
 
@@ -275,8 +314,14 @@ export const register: Register = on => {
   } | null = null
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'spend', description: 'Где ушли токены и лимиты этой сессии' })
-    await $.command.register({ name: 'advisor', description: 'Показать/скрыть подсказку модели над вводом' })
+    const savedLang = (await $.store.get('lang')) as Lang | null | undefined
+    if (savedLang === 'ru' || savedLang === 'en') {
+      setLang(savedLang)
+      await update($, langAtom, () => savedLang)
+    }
+    await $.command.register({ name: 'spend', description: tr('Где ушли токены и лимиты этой сессии', 'Where this session\'s tokens and limits went') })
+    await $.command.register({ name: 'advisor', description: tr('Показать/скрыть подсказку модели над вводом', 'Show or hide the model advice above the prompt') })
+    await $.command.register({ name: 'lang', description: 'Interface language: Русский / English' })
     await refreshLimits($)
     // A new chat starts from what earlier chats measured: calibration and lifetime savings.
     const kept = (await $.store.get('lifetime')) as Lifetime | null | undefined
@@ -291,15 +336,21 @@ export const register: Register = on => {
 
   on('command.run', { command: 'spend' }, async $ => {
     await refreshLimits($)
-    await $.ui.open({ id: PANE, title: 'Расход сессии' })
+    await $.ui.open({ id: PANE, title: tr('Расход сессии', 'Session spending') })
 
-    return { text: 'Панель расхода открыта.' }
+    return { text: tr('Панель расхода открыта.', 'Spending pane opened.') }
   })
 
   on('command.run', { command: 'advisor' }, async $ => {
     const isHidden = await update($, hiddenAtom, v => !v)
 
-    return { text: isHidden ? 'Подсказка скрыта.' : 'Подсказка включена.' }
+    return { text: isHidden ? tr('Подсказка скрыта.', 'Advice hidden.') : tr('Подсказка включена.', 'Advice shown.') }
+  })
+
+  on('command.run', { command: 'lang' }, async $ => {
+    await switchLang($)
+
+    return { text: tr('Язык: русский.', 'Language: English.') }
   })
 
   // Advise while the person types: heuristic at once, Haiku after a pause when unsure.
@@ -343,8 +394,8 @@ export const register: Register = on => {
       if ((await $.session.turns()) === 0 && (await read($, choiceAtom)) === null && !typed.startsWith('/')) {
         const a = classify(typed)
         await update($, choiceAtom, () => ({ model: a.model, effort: a.effort, mode: a.mode, fast: a.fast, isPersistent: false }))
-        const tips = [`Автовыбор для 1-го сообщения: ${short(a.model)} · ${a.effort} — ${a.reason}`]
-        if (a.mode !== 'default') tips.push(`советую режим ${MODE_HINT[a.mode]} (Shift+Tab)`)
+        const tips = [tr(`Автовыбор для 1-го сообщения: ${short(a.model)} · ${a.effort} — ${a.reason}`, `Auto-pick for the 1st message: ${short(a.model)} · ${a.effort} — ${a.reason}`)]
+        if (a.mode !== 'default') tips.push(tr(`советую режим ${MODE_HINT[a.mode]} (Shift+Tab)`, `suggested mode ${MODE_HINT[a.mode]} (Shift+Tab)`))
         $.ui.toast(tips.join(' · '), { timeoutMs: 7000 })
       }
     }
@@ -387,7 +438,7 @@ export const register: Register = on => {
       }
     }
     if (e.agentId === undefined && result.toolUses.some(t => EDIT_TOOLS.has(t.name))) edited = true
-    const names = e.agentId === undefined ? result.toolUses.map(t => t.name) : ['Agent (субагент)']
+    const names = e.agentId === undefined ? result.toolUses.map(t => t.name) : [tr('Agent (субагент)', 'Agent (subagent)')]
     await update($, ledgerAtom, l => {
       const byTool = { ...l.byTool }
       for (const name of names) {
@@ -452,7 +503,7 @@ export const register: Register = on => {
     const level = five === undefined ? 0 : five.percentUsed >= 90 ? 90 : five.percentUsed >= 80 ? 80 : 0
     if (level > warned) {
       warned = level
-      $.ui.toast(`Лимит 5ч использован на ${five?.percentUsed}% — переходите на Haiku/Sonnet и low effort`)
+      $.ui.toast(tr(`Лимит 5ч использован на ${five?.percentUsed}% — переходите на Haiku/Sonnet и low effort`, `5h limit is ${five?.percentUsed}% used: switch to Haiku/Sonnet and low effort`))
     }
 
     return next(e)
@@ -461,6 +512,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || (await read($, hiddenAtom))) return next(e)
 
+    setLang(await read($, langAtom))
     const { Box, Button, Text } = $.ui.resolve(e)
     const advice = await read($, adviceAtom)
     const choice = await read($, choiceAtom)
@@ -470,7 +522,7 @@ export const register: Register = on => {
     // On a subscription the saving reads as limit %, with $ beside it; elsewhere as $.
     const amount = (usd: number) => {
       const p = limits.windows.length > 0 ? asLimitPct(usd, ledger, '5h') : null
-      return p === null ? `$${usd.toFixed(2)}` : `${pctText(p)} лимита 5ч`
+      return p === null ? `$${usd.toFixed(2)}` : `${pctText(p)} ${tr('лимита 5ч', 'of 5h limit')}`
     }
     const chatTokens =Object.values(ledger.byModel).reduce((s, t) => s + total(t), 0) + total(ledger.advisor)
     const base: Choice = choice ?? {
@@ -494,59 +546,59 @@ export const register: Register = on => {
       <Box flexDirection="column">
         {advice === null && !e.props.isWorking && (
           <Box gap={2}>
-            <Button key="check" label="🔍 Проверить промпт" onPress={() => checkPrompt($)} />
-            <Text dimColor>подберу самую дешёвую модель, которая справится</Text>
+            <Button key="check" label={tr('🔍 Проверить промпт', '🔍 Check prompt')} onPress={() => checkPrompt($)} />
+            <Text dimColor>{tr('подберу самую дешёвую модель, которая справится', 'picks the cheapest model that can handle it')}</Text>
           </Box>
         )}
         {advice !== null && !e.props.isWorking && (
           <Box flexDirection="column" borderStyle="round" borderColor="#d0a050" paddingX={1}>
             <Box gap={2}>
-              <Text bold>💡 Совет</Text>
+              <Text bold>{tr('💡 Совет', '💡 Advice')}</Text>
               <Text>
-                <Text dimColor>модель </Text>
+                <Text dimColor>{tr('модель ', 'model ')}</Text>
                 <Text bold color={MODEL_COLOR[advice.model]}>{short(advice.model)}</Text>
               </Text>
               <Text>
-                <Text dimColor>сила </Text>
+                <Text dimColor>{tr('сила ', 'effort ')}</Text>
                 <Text color="#d0a050">{dots(advice.effort)}</Text>
                 <Text> {EFFORT_RU[advice.effort]}</Text>
               </Text>
               <Text>
-                <Text dimColor>режим </Text>
+                <Text dimColor>{tr('режим ', 'mode ')}</Text>
                 <Text bold>{MODE_HINT[advice.mode]}</Text>
                 {advice.fast ? <Text color="#d0a050"> ⚡fast</Text> : null}
               </Text>
             </Box>
             <Text dimColor>
-              ↳ {advice.reason} · {advice.source === 'haiku' ? 'оценил Haiku' : 'по ключевым словам'}
+              ↳ {advice.reason} · {advice.source === 'haiku' ? tr('оценил Haiku', 'rated by Haiku') : tr('по ключевым словам', 'by keywords')}
             </Text>
             <Box gap={2}>
               <Button
                 key="apply"
-                label="Применить"
+                label={tr('Применить', 'Apply')}
                 onPress={() => apply($, { model: advice.model, effort: advice.effort, mode: advice.mode, fast: advice.fast, isPersistent: false })}
               />
-              <Button key="recheck" label="↻ Перепроверить" plain onPress={() => checkPrompt($)} />
-              <Button key="own" label={isEditing ? 'Готово' : 'Своё…'} plain onPress={() => update($, editingAtom, v => !v)} />
+              <Button key="recheck" label={tr('↻ Перепроверить', '↻ Re-check')} plain onPress={() => checkPrompt($)} />
+              <Button key="own" label={isEditing ? tr('Готово', 'Done') : tr('Своё…', 'Custom…')} plain onPress={() => update($, editingAtom, v => !v)} />
             </Box>
           </Box>
         )}
         {isEditing && !e.props.isWorking && (
           <Box flexDirection="column" paddingX={1}>
             <Box gap={1}>
-              <Box width={8}><Text dimColor>модель</Text></Box>
+              <Box width={8}><Text dimColor>{tr('модель', 'model')}</Text></Box>
               {MODELS.map(m => (
                 <Button key={`m-${m}`} label={m === base.model ? `[${short(m)}]` : short(m)} plain onPress={() => setPick({ model: m })} />
               ))}
             </Box>
             <Box gap={1}>
-              <Box width={8}><Text dimColor>сила</Text></Box>
+              <Box width={8}><Text dimColor>{tr('сила', 'effort')}</Text></Box>
               {EFFORTS.map(f => (
                 <Button key={`f-${f}`} label={f === base.effort ? `[${f}]` : f} plain onPress={() => setPick({ effort: f })} />
               ))}
             </Box>
             <Box gap={1}>
-              <Box width={8}><Text dimColor>режим</Text></Box>
+              <Box width={8}><Text dimColor>{tr('режим', 'mode')}</Text></Box>
               {MODES.map(m => (
                 <Button key={`r-${m}`} label={m === base.mode ? `[${MODE_HINT[m]}]` : MODE_HINT[m]} plain onPress={() => setPick({ mode: m })} />
               ))}
@@ -556,74 +608,75 @@ export const register: Register = on => {
         {choice !== null && (
           <Box gap={2} paddingX={1}>
             <Text color="success">
-              ✔ Выбрано: {short(choice.model)} · {choice.effort} {choice.isPersistent ? '(закреплено)' : '(на 1 ход)'}
+              ✔ {tr('Выбрано', 'Chosen')}: {short(choice.model)} · {choice.effort} {choice.isPersistent ? tr('(закреплено)', '(pinned)') : tr('(на 1 ход)', '(1 turn)')}
             </Text>
-            <Button key="pin" label={choice.isPersistent ? 'Открепить' : 'Закрепить'} plain onPress={() => setPick({ isPersistent: !choice.isPersistent })} />
-            <Button key="reset" label="Сбросить" plain onPress={() => update($, choiceAtom, () => null)} />
+            <Button key="pin" label={choice.isPersistent ? tr('Открепить', 'Unpin') : tr('Закрепить', 'Pin')} plain onPress={() => setPick({ isPersistent: !choice.isPersistent })} />
+            <Button key="reset" label={tr('Сбросить', 'Reset')} plain onPress={() => update($, choiceAtom, () => null)} />
           </Box>
         )}
         {(limits.windows.length > 0 || limits.context !== null || limits.usd !== null) && (
           <Box flexDirection="column" borderStyle="round" borderColor="#555555" paddingX={1}>
             <Box gap={3}>
-              {label('Этот чат')}
+              {label(tr('Этот чат', 'This chat'))}
               {limits.context !== null && (
                 <Text>
-                  <Text dimColor>контекст </Text>
+                  <Text dimColor>{tr('контекст ', 'context ')}</Text>
                   <Text color={levelColor(limits.context)}>{bar(limits.context)}</Text>
                   <Text bold> {Math.round(limits.context)}%</Text>
                 </Text>
               )}
               <Text>
-                <Text dimColor>токены </Text>
+                <Text dimColor>{tr('токены ', 'tokens ')}</Text>
                 <Text bold>{fmt(chatTokens)}</Text>
               </Text>
               {limits.usd !== null && (
                 <Text>
-                  <Text dimColor>стоимость </Text>
+                  <Text dimColor>{tr('стоимость ', 'cost ')}</Text>
                   <Text bold>${limits.usd.toFixed(2)}</Text>
                 </Text>
               )}
-              <Text dimColor>/spend — подробности</Text>
+              <Text dimColor>{tr('/spend — подробности', '/spend — details')}</Text>
+              <Button key="lang" label={tr('EN', 'RU')} plain onPress={() => switchLang($)} />
             </Box>
             <Box gap={3}>
-              {label('Экономия')}
+              {label(tr('Экономия', 'Savings'))}
               <Text>
-                <Text color="#5fb878">💰 сэкономлено </Text>
+                <Text color="#5fb878">{tr('💰 сэкономлено ', '💰 saved ')}</Text>
                 <Text bold color="#5fb878">{amount(ledger.saved ?? 0)}</Text>
               </Text>
               <Text>
-                <Text color="#e06060">упущено </Text>
+                <Text color="#e06060">{tr('упущено ', 'missed ')}</Text>
                 <Text bold color="#e06060">{amount(ledger.missed ?? 0)}</Text>
               </Text>
               <Text dimColor>
-                за всё время: +{amount(life.saved)} / −{amount(life.missed)}
+                {tr('за всё время', 'all time')}: +{amount(life.saved)} / −{amount(life.missed)}
               </Text>
             </Box>
             {limits.windows.length > 0 && (
               <Box gap={3}>
-                {label('Лимиты')}
+                {label(tr('Лимиты', 'Limits'))}
                 {limits.windows.map(w => (
                   <Text>
-                    <Text dimColor>{w.kind === 'five_hour' ? '5 часов ' : w.kind === 'seven_day' ? 'неделя ' : `${w.kind} `}</Text>
+                    <Text dimColor>{w.kind === 'five_hour' ? tr('5 часов ', '5 hours ') : w.kind === 'seven_day' ? tr('неделя ', 'week ') : `${w.kind} `}</Text>
                     <Text color={levelColor(w.percentUsed)}>{bar(w.percentUsed)}</Text>
                     <Text bold> {Math.round(w.percentUsed)}%</Text>
-                    {resetIn(w.resetsAt) !== null && <Text dimColor> · сброс через {resetIn(w.resetsAt)}</Text>}
+                    {resetIn(w.resetsAt) !== null && <Text dimColor> · {tr('сброс через', 'resets in')} {resetIn(w.resetsAt)}</Text>}
                   </Text>
                 ))}
               </Box>
             )}
             <Box gap={3}>
-              {label('Граф')}
+              {label(tr('Граф', 'Graph'))}
               <Button
                 key="graphify-build"
-                label={graph.status === 'running' ? 'Строю граф…' : 'Построить / обновить граф'}
+                label={graph.status === 'running' ? tr('Строю граф…', 'Building graph…') : tr('Построить / обновить граф', 'Build / update graph')}
                 onPress={() => {
                   void buildGraph($)
                 }}
               />
               <Text dimColor>
                 {graph.status === 'idle'
-                  ? 'graphify update . — только разбор кода, без LLM и токенов'
+                  ? tr('graphify update . — только разбор кода, без LLM и токенов', 'graphify update . — code parsing only, no LLM, no tokens')
                   : `${GRAPH_RU[graph.status]}${graph.message ? ` — ${graph.message}` : ''}`}
               </Text>
             </Box>
@@ -634,6 +687,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    setLang(await read($, langAtom))
     const { Box, Text } = $.ui.resolve(e)
     const ledger = await read($, ledgerAtom)
     const limits = await read($, limitsAtom)
@@ -646,30 +700,30 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column" gap={1}>
         <Box flexDirection="column">
-          <Text bold>Итого</Text>
+          <Text bold>{tr('Итого', 'Total')}</Text>
           <Text>
-            Стоимость: {limits.usd === null ? '—' : `$${limits.usd.toFixed(3)}`} · контекст:{' '}
+            {tr('Стоимость', 'Cost')}: {limits.usd === null ? '—' : `$${limits.usd.toFixed(3)}`} · {tr('контекст', 'context')}:{' '}
             {limits.context === null ? '—' : `${Math.round(limits.context)}%`}
           </Text>
           {limits.windows.map(w => (
             <Text>
-              Лимит {windowLabel(w.kind)}: {w.percentUsed}%{w.resetsAt ? ` (сброс ${w.resetsAt.slice(0, 16).replace('T', ' ')})` : ''}
+              {tr('Лимит', 'Limit')} {windowLabel(w.kind)}: {w.percentUsed}%{w.resetsAt ? ` (${tr('сброс', 'resets')} ${w.resetsAt.slice(0, 16).replace('T', ' ')})` : ''}
             </Text>
           ))}
-          {total(ledger.advisor) > 0 && <Text dimColor>Сам советчик (Haiku): {fmt(total(ledger.advisor))} ток.</Text>}
+          {total(ledger.advisor) > 0 && <Text dimColor>{tr('Сам советчик (Haiku)', 'The advisor itself (Haiku)')}: {fmt(total(ledger.advisor))} {tr('ток.', 'tok.')}</Text>}
         </Box>
         <Box flexDirection="column">
-          <Text bold>Экономия</Text>
+          <Text bold>{tr('Экономия', 'Savings')}</Text>
           <Text color="#5fb878">
-            💰 Сэкономлено: ${(ledger.saved ?? 0).toFixed(3)} — ходы шли на модели дешевле той, что выбрана в чате
+            {tr('💰 Сэкономлено', '💰 Saved')}: ${(ledger.saved ?? 0).toFixed(3)} — {tr('ходы шли на модели дешевле той, что выбрана в чате', 'turns ran on a model cheaper than the chat\'s own')}
           </Text>
           <Text color="#e06060">
-            ✗ Упущено: ${(ledger.missed ?? 0).toFixed(3)} — совет был дешевле, но его не применили
+            {tr('✗ Упущено', '✗ Missed')}: ${(ledger.missed ?? 0).toFixed(3)} — {tr('совет был дешевле, но его не применили', 'the advice was cheaper but was not applied')}
           </Text>
           {(ledger.saved ?? 0) + (ledger.missed ?? 0) > 0 && (
             <Text>
               <Text color="#5fb878">{bar(((ledger.saved ?? 0) / ((ledger.saved ?? 0) + (ledger.missed ?? 0))) * 100, 20)}</Text>
-              <Text dimColor> использовано {Math.round(((ledger.saved ?? 0) / ((ledger.saved ?? 0) + (ledger.missed ?? 0))) * 100)}% возможной экономии</Text>
+              <Text dimColor> {tr('использовано', 'used')} {Math.round(((ledger.saved ?? 0) / ((ledger.saved ?? 0) + (ledger.missed ?? 0))) * 100)}% {tr('возможной экономии', 'of the possible savings')}</Text>
             </Text>
           )}
           {limits.windows.length > 0 && (
@@ -680,55 +734,55 @@ export const register: Register = on => {
                 const s7 = asLimitPct(ledger.saved ?? 0, ledger, '7d')
                 const m7 = asLimitPct(ledger.missed ?? 0, ledger, '7d')
                 if (s5 === null) {
-                  return <Text dimColor>Подписка: % лимитов появятся после ходов, которые сдвинут лимит 5ч (мод замеряет, сколько % стоит $1)</Text>
+                  return <Text dimColor>{tr('Подписка: % лимитов появятся после ходов, которые сдвинут лимит 5ч (мод замеряет, сколько % стоит $1)', 'Subscription: limit % appear after turns that move the 5h limit (the mod measures how many % one $1 costs)')}</Text>
                 }
                 return (
                   <Box flexDirection="column">
                     <Text>
-                      <Text dimColor>Подписка, лимит 5ч: </Text>
-                      <Text bold color="#5fb878">сэкономлено {pctText(s5)}</Text>
+                      <Text dimColor>{tr('Подписка, лимит 5ч: ', 'Subscription, 5h limit: ')}</Text>
+                      <Text bold color="#5fb878">{tr('сэкономлено', 'saved')} {pctText(s5)}</Text>
                       <Text dimColor> · </Text>
-                      <Text bold color="#e06060">упущено {pctText(m5 ?? 0)}</Text>
+                      <Text bold color="#e06060">{tr('упущено', 'missed')} {pctText(m5 ?? 0)}</Text>
                     </Text>
                     {s7 !== null && (
                       <Text>
-                        <Text dimColor>Подписка, неделя: </Text>
-                        <Text bold color="#5fb878">сэкономлено {pctText(s7)}</Text>
+                        <Text dimColor>{tr('Подписка, неделя: ', 'Subscription, week: ')}</Text>
+                        <Text bold color="#5fb878">{tr('сэкономлено', 'saved')} {pctText(s7)}</Text>
                         <Text dimColor> · </Text>
-                        <Text bold color="#e06060">упущено {pctText(m7 ?? 0)}</Text>
+                        <Text bold color="#e06060">{tr('упущено', 'missed')} {pctText(m7 ?? 0)}</Text>
                       </Text>
                     )}
                     <Text dimColor>
-                      Замер: ${(ledger.calUsd ?? 0).toFixed(2)} по ценам API сдвинули лимит 5ч на {(ledger.cal5h ?? 0).toFixed(1)}%
+                      {tr('Замер', 'Measured')}: ${(ledger.calUsd ?? 0).toFixed(2)} {tr('по ценам API сдвинули лимит 5ч на', 'at API prices moved the 5h limit by')} {(ledger.cal5h ?? 0).toFixed(1)}%
                     </Text>
                   </Box>
                 )
               })()}
             </Box>
           )}
-          <Text dimColor>Цены API за 1M токенов: Haiku $0.10/$0.50 · Sonnet $2/$10 · Opus $4/$20 (вход/выход)</Text>
+          <Text dimColor>{tr('Цены API за 1M токенов: Haiku $0.10/$0.50 · Sonnet $2/$10 · Opus $4/$20 (вход/выход)', 'API prices per 1M tokens: Haiku $0.10/$0.50 · Sonnet $2/$10 · Opus $4/$20 (input/output)')}</Text>
         </Box>
         <Box flexDirection="column">
-          <Text bold>По моделям</Text>
-          {models.length === 0 && <Text dimColor>Пока нет запросов.</Text>}
+          <Text bold>{tr('По моделям', 'By model')}</Text>
+          {models.length === 0 && <Text dimColor>{tr('Пока нет запросов.', 'No requests yet.')}</Text>}
           {models.map(([model, t]) => (
             <Text>
-              {short(model).padEnd(8)} {fmt(total(t)).padStart(7)} ({Math.round((total(t) / allTokens) * 100)}%) · вход {fmt(t.input)} · выход {fmt(t.output)} · кэш {fmt(t.cacheRead)}/{fmt(t.cacheWrite)}
+              {short(model).padEnd(8)} {fmt(total(t)).padStart(7)} ({Math.round((total(t) / allTokens) * 100)}%) · {tr('вход', 'in')} {fmt(t.input)} · {tr('выход', 'out')} {fmt(t.output)} · {tr('кэш', 'cache')} {fmt(t.cacheRead)}/{fmt(t.cacheWrite)}
             </Text>
           ))}
         </Box>
         <Box flexDirection="column">
-          <Text bold>На что ушло (инструменты)</Text>
-          {tools.length === 0 && <Text dimColor>Инструменты не вызывались.</Text>}
+          <Text bold>{tr('На что ушло (инструменты)', 'Where it went (tools)')}</Text>
+          {tools.length === 0 && <Text dimColor>{tr('Инструменты не вызывались.', 'No tools were called.')}</Text>}
           {tools.map(([name, s]) => (
             <Text>
-              {name.padEnd(20)} {String(s.calls).padStart(3)} выз. · {fmt(s.tokens)} ток.
+              {name.padEnd(20)} {String(s.calls).padStart(3)} {tr('выз.', 'calls')} · {fmt(s.tokens)} {tr('ток.', 'tok.')}
             </Text>
           ))}
         </Box>
         <Box flexDirection="column">
-          <Text bold>Самые дорогие ходы</Text>
-          {turns.length === 0 && <Text dimColor>Ходов ещё не было.</Text>}
+          <Text bold>{tr('Самые дорогие ходы', 'Most expensive turns')}</Text>
+          {turns.length === 0 && <Text dimColor>{tr('Ходов ещё не было.', 'No turns yet.')}</Text>}
           {turns.map(t => (
             <Text wrap="truncate-end">
               ${t.usd.toFixed(3)} · {fmt(total(t.tokens))} · {short(t.model)} · «{t.prompt}»

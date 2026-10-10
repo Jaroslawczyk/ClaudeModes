@@ -59,6 +59,7 @@ export type Limits = {
   windows: { kind: string; percentUsed: number; resetsAt?: string }[]
 }
 
+export type Lang = 'ru' | 'en'
 export type GraphState = { status: 'idle' | 'running' | 'done' | 'failed'; message: string }
 
 declare module 'claude-code' {
@@ -71,6 +72,7 @@ declare module 'claude-code' {
       ledger: Ledger
       limits: Limits
       graph: GraphState
+      lang: Lang
     }
   }
 }

@@ -112,6 +112,18 @@ function levelColor(percent: number): string {
   return percent >= 80 ? '#e06060' : percent >= 50 ? '#d0a050' : '#5fb878'
 }
 
+// Time left until a limit window resets, as «2ч 15м»; null when the engine gave no reset time.
+function resetIn(iso: string | undefined): string | null {
+  if (!iso) return null
+  const ms = Date.parse(iso) - Date.now()
+  if (Number.isNaN(ms)) return null
+  if (ms <= 0) return 'сейчас'
+  const mins = Math.ceil(ms / 60_000)
+  const h = Math.floor(mins / 60)
+  const m = mins % 60
+  return h > 0 ? `${h}ч ${m}м` : `${m}м`
+}
+
 function windowLabel(kind: string): string {
   return kind === 'five_hour' ? '5ч' : kind === 'seven_day' ? '7д' : kind
 }
@@ -539,6 +551,7 @@ export const register: Register = on => {
                     <Text dimColor>{w.kind === 'five_hour' ? '5 часов ' : w.kind === 'seven_day' ? 'неделя ' : `${w.kind} `}</Text>
                     <Text color={levelColor(w.percentUsed)}>{bar(w.percentUsed)}</Text>
                     <Text bold> {Math.round(w.percentUsed)}%</Text>
+                    {w.kind === 'five_hour' && resetIn(w.resetsAt) !== null && <Text dimColor> · сброс через {resetIn(w.resetsAt)}</Text>}
                   </Text>
                 ))}
               </Box>

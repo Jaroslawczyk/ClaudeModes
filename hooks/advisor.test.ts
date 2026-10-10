@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { classify, parseAdvice } from './classify'
-import { short, total, userText } from './register'
+import { priceOf, short, total, userText } from './register'
 
 describe('classify', () => {
   test('simple question goes to Haiku, low effort', async () => {
@@ -55,6 +55,15 @@ describe('cheapest that copes', () => {
 
   test('a multi-step task stays on Sonnet, not Opus', async () => {
     expect(classify('реализуй экспорт отчётов в CSV для admin.ts, report.ts, api.ts').model).toBe('sonnet')
+  })
+})
+
+describe('savings', () => {
+  test('Haiku is far cheaper than Sonnet on the same tokens', async () => {
+    const t = { input: 1_000_000, output: 100_000, cacheRead: 0, cacheWrite: 0 }
+    expect(priceOf('claude-sonnet-5-5', t)).toBe(3)
+    expect(priceOf('claude-haiku-5-5', t)).toBe(0.15)
+    expect(priceOf('claude-fable-5-1', t)).toBe(null)
   })
 })
 

@@ -42,6 +42,9 @@ export type Ledger = {
   byTool: Record<string, ToolSpend>
   advisor: Tokens
   turns: TurnRecord[]
+  // $ saved by running cheaper than the chat's own model, and $ that a shown cheaper advice could have saved but was not applied.
+  saved?: number
+  missed?: number
 }
 
 export type Limits = {

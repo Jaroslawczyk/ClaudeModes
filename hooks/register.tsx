@@ -60,6 +60,26 @@ function fmt(n: number): string {
 }
 
 const PINK = '#f06cb4'
+
+// $ per 1M tokens (Anthropic API, cached 2026-10-06): input, output, cache read, cache write (1.25× input).
+const PRICES: Record<ModelName, [number, number, number, number]> = {
+  haiku: [0.1, 0.5, 0.01, 0.125],
+  sonnet: [2, 10, 0.2, 2.5],
+  opus: [4, 20, 0.2, 5],
+}
+
+function family(model: string): ModelName | null {
+  const m = model.toLowerCase().match(/haiku|sonnet|opus/)
+  return m ? (m[0] as ModelName) : null
+}
+
+// What the same tokens cost on a model; null for one with no known price (e.g. Fable).
+export function priceOf(model: string, t: Tokens): number | null {
+  const f = family(model)
+  if (f === null) return null
+  const [i, o, cr, cw] = PRICES[f]
+  return (t.input * i + t.output * o + t.cacheRead * cr + t.cacheWrite * cw) / 1_000_000
+}
 const MODEL_COLOR: Record<ModelName, string> = { haiku: '#5fb878', sonnet: '#6a9fe0', opus: '#c27ae0' }
 const EFFORT_RU: Record<Effort, string> = { low: 'низкая', medium: 'средняя', high: 'высокая', xhigh: 'очень высокая', max: 'максимум' }
 
@@ -152,6 +172,7 @@ export const register: Register = on => {
   let pending: { cancel: () => void } | null = null
   let warned = 0
   let choiceUsed = false
+  let adviceAtSubmit: Advice | null = null
   let turn: { prompt: string; usdStart: number; tokens: Tokens; tools: Record<string, number>; model: string } | null = null
 
   on('session.start', async ($, e, next) => {
@@ -211,6 +232,7 @@ export const register: Register = on => {
         $.ui.toast(tips.join(' · '), { timeoutMs: 7000 })
       }
     }
+    if (e.turnId === undefined) adviceAtSubmit = await read($, adviceAtom)
     await update($, adviceAtom, () => null)
     await update($, editingAtom, () => false)
 
@@ -228,7 +250,20 @@ export const register: Register = on => {
     const usage = result.usage
     if (usage === null) return result
 
-    const spent = total(add(zero(), usage))
+    const stepTokens = add(zero(), usage)
+    const spent = total(stepTokens)
+
+    // Savings: this step against the chat's own model; missed: a cheaper shown advice left unapplied.
+    if (e.agentId === undefined) {
+      const actual = priceOf(usage.model, stepTokens)
+      const base = priceOf(await $.session.model(), stepTokens)
+      const advised = choice === null && adviceAtSubmit !== null ? priceOf(adviceAtSubmit.model, stepTokens) : null
+      const saved = actual !== null && base !== null && base > actual ? base - actual : 0
+      const missed = actual !== null && advised !== null && advised < actual ? actual - advised : 0
+      if (saved > 0 || missed > 0) {
+        await update($, ledgerAtom, l => ({ ...l, saved: (l.saved ?? 0) + saved, missed: (l.missed ?? 0) + missed }))
+      }
+    }
     const names = e.agentId === undefined ? result.toolUses.map(t => t.name) : ['Agent (субагент)']
     await update($, ledgerAtom, l => {
       const byTool = { ...l.byTool }
@@ -389,6 +424,18 @@ export const register: Register = on => {
                 <Text color={PINK}>Токены </Text>
                 <Text bold color={PINK}>{fmt(chatTokens)}</Text>
               </Text>
+              {(ledger.saved ?? 0) > 0 && (
+                <Text>
+                  <Text color="#5fb878">💰 сэкономлено </Text>
+                  <Text bold color="#5fb878">${(ledger.saved ?? 0).toFixed(2)}</Text>
+                </Text>
+              )}
+              {(ledger.missed ?? 0) > 0 && (
+                <Text>
+                  <Text color="#e06060">упущено </Text>
+                  <Text bold color="#e06060">${(ledger.missed ?? 0).toFixed(2)}</Text>
+                </Text>
+              )}
               {limits.usd !== null && limits.usd > 0 && (
                 <Text>
                   <Text color={PINK}>Стоимость </Text>
@@ -442,6 +489,22 @@ export const register: Register = on => {
             </Text>
           ))}
           {total(ledger.advisor) > 0 && <Text dimColor>Сам советчик (Haiku): {fmt(total(ledger.advisor))} ток.</Text>}
+        </Box>
+        <Box flexDirection="column">
+          <Text bold>Экономия</Text>
+          <Text color="#5fb878">
+            💰 Сэкономлено: ${(ledger.saved ?? 0).toFixed(3)} — ходы шли на модели дешевле той, что выбрана в чате
+          </Text>
+          <Text color="#e06060">
+            ✗ Упущено: ${(ledger.missed ?? 0).toFixed(3)} — совет был дешевле, но его не применили
+          </Text>
+          {(ledger.saved ?? 0) + (ledger.missed ?? 0) > 0 && (
+            <Text>
+              <Text color="#5fb878">{bar(((ledger.saved ?? 0) / ((ledger.saved ?? 0) + (ledger.missed ?? 0))) * 100, 20)}</Text>
+              <Text dimColor> использовано {Math.round(((ledger.saved ?? 0) / ((ledger.saved ?? 0) + (ledger.missed ?? 0))) * 100)}% возможной экономии</Text>
+            </Text>
+          )}
+          <Text dimColor>Цены API за 1M токенов: Haiku $0.10/$0.50 · Sonnet $2/$10 · Opus $4/$20 (вход/выход)</Text>
         </Box>
         <Box flexDirection="column">
           <Text bold>По моделям</Text>

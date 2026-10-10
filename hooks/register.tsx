@@ -1,0 +1,476 @@
+import { atom, read, update } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
+
+import type { Advice, Choice, Effort, Ledger, Limits, Mode, ModelName, Tokens } from '../types'
+import { ADVISOR_PROMPT, classify, parseAdvice } from './classify'
+
+const PANE = 'model-advisor-spend'
+
+export const MODEL_IDS: Record<ModelName, string> = {
+  haiku: 'claude-haiku-5-5',
+  sonnet: 'claude-sonnet-5-5',
+  opus: 'claude-opus-5-5',
+}
+const MODELS: ModelName[] = ['haiku', 'sonnet', 'opus']
+const EFFORTS: Effort[] = ['low', 'medium', 'high', 'xhigh', 'max']
+const MODES: Mode[] = ['default', 'acceptEdits', 'plan', 'auto']
+const MODE_HINT: Record<Mode, string> = {
+  default: 'обычный',
+  acceptEdits: 'accept edits',
+  plan: 'plan mode',
+  auto: 'auto',
+}
+
+const EMPTY_LEDGER: Ledger = { byModel: {}, byTool: {}, advisor: zero(), turns: [] }
+
+const adviceAtom = atom({ plugin: 'model-advisor', key: 'advice' } as const, null)
+const choiceAtom = atom({ plugin: 'model-advisor', key: 'choice' } as const, null)
+const editingAtom = atom({ plugin: 'model-advisor', key: 'isEditing' } as const, false)
+const hiddenAtom = atom({ plugin: 'model-advisor', key: 'isHidden' } as const, false)
+const ledgerAtom = atom({ plugin: 'model-advisor', key: 'ledger' } as const, EMPTY_LEDGER)
+const limitsAtom = atom({ plugin: 'model-advisor', key: 'limits' } as const, { usd: null, context: null, windows: [] })
+
+function zero(): Tokens {
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+}
+
+function add(a: Tokens, u: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number }): Tokens {
+  return {
+    input: a.input + u.input_tokens,
+    output: a.output + u.output_tokens,
+    cacheRead: a.cacheRead + u.cache_read_input_tokens,
+    cacheWrite: a.cacheWrite + u.cache_creation_input_tokens,
+  }
+}
+
+export function total(t: Tokens): number {
+  return t.input + t.output + t.cacheRead + t.cacheWrite
+}
+
+export function short(model: string): string {
+  const m = model.match(/(haiku|sonnet|opus|fable)/i)
+  const name = m?.[1]?.toLowerCase()
+  return name ? name.charAt(0).toUpperCase() + name.slice(1) : model
+}
+
+function fmt(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return String(n)
+}
+
+const PINK = '#f06cb4'
+const MODEL_COLOR: Record<ModelName, string> = { haiku: '#5fb878', sonnet: '#6a9fe0', opus: '#c27ae0' }
+const EFFORT_RU: Record<Effort, string> = { low: 'низкая', medium: 'средняя', high: 'высокая', xhigh: 'очень высокая', max: 'максимум' }
+
+export function bar(percent: number, width = 10): string {
+  const filled = Math.max(0, Math.min(width, Math.round((percent / 100) * width)))
+  return '█'.repeat(filled) + '░'.repeat(width - filled)
+}
+
+function dots(effort: Effort): string {
+  const n = EFFORTS.indexOf(effort) + 1
+  return '●'.repeat(n) + '○'.repeat(EFFORTS.length - n)
+}
+
+function levelColor(percent: number): string {
+  return percent >= 80 ? '#e06060' : percent >= 50 ? '#d0a050' : '#5fb878'
+}
+
+function windowLabel(kind: string): string {
+  return kind === 'five_hour' ? '5ч' : kind === 'seven_day' ? '7д' : kind
+}
+
+function sameAdvice(a: Advice | null, b: Advice | null): boolean {
+  return a?.model === b?.model && a?.effort === b?.effort && a?.mode === b?.mode && a?.fast === b?.fast && a?.reason === b?.reason
+}
+
+async function refreshLimits($: EngineInterface): Promise<void> {
+  const usage = await $.session.usage()
+  const limits: Limits = {
+    usd: usage.cost?.usd ?? null,
+    context: usage.context.percent ?? null,
+    windows: usage.rateLimits.map(w => ({ kind: w.kind, percentUsed: w.percentUsed, resetsAt: w.resetsAt })),
+  }
+  await update($, limitsAtom, () => limits)
+}
+
+const cache = new Map<string, Advice>()
+
+async function askHaiku($: EngineInterface, text: string): Promise<void> {
+  const r = await $.model.complete({
+    model: 'haiku',
+    effort: 'low',
+    prompt: ADVISOR_PROMPT + text.slice(0, 4000),
+    maxTokens: 120,
+    timeoutMs: 8000,
+  })
+  await update($, ledgerAtom, l => ({ ...l, advisor: add(l.advisor, r.usage) }))
+  const advice = r.isAnswered ? parseAdvice(r.text) : null
+  if (advice === null) return
+  cache.set(text, advice)
+  await update($, adviceAtom, () => advice)
+}
+
+let judged = ''
+
+// Drops the blocks the engine wraps around a prompt (<system-reminder>, <ide_…>, …).
+export function userText(raw: string): string {
+  return raw
+    .replace(/<([a-z][\w-]*)[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// The draft as last typed; read when the person presses «Проверить промпт».
+let draft = ''
+
+// On demand only: a free heuristic verdict at once, then Haiku's (a few hundred tokens) for longer prompts.
+async function checkPrompt($: EngineInterface): Promise<void> {
+  const text = draft.trim()
+  if (text.length < 2 || text.startsWith('/')) {
+    $.ui.toast('Сначала напишите промпт — потом нажмите «Проверить»')
+    return
+  }
+  judged = text
+  const cached = cache.get(text)
+  await update($, adviceAtom, () => cached ?? classify(text))
+  if (cached === undefined && text.length >= 15) {
+    await askHaiku($, text)
+  }
+}
+
+async function apply($: EngineInterface, choice: Choice): Promise<void> {
+  await update($, choiceAtom, () => choice)
+  const tips = [`Модель ${short(choice.model)} · ${choice.effort} применены к следующему ходу`]
+  if (choice.mode !== 'default') tips.push(`режим ${MODE_HINT[choice.mode]}: Shift+Tab`)
+  if (choice.fast) tips.push('быстрый режим: /fast')
+  $.ui.toast(tips.join(' · '), { timeoutMs: 6000 })
+}
+
+export const register: Register = on => {
+  let pending: { cancel: () => void } | null = null
+  let warned = 0
+  let choiceUsed = false
+  let turn: { prompt: string; usdStart: number; tokens: Tokens; tools: Record<string, number>; model: string } | null = null
+
+  on('session.start', async ($, e, next) => {
+    await $.command.register({ name: 'spend', description: 'Где ушли токены и лимиты этой сессии' })
+    await $.command.register({ name: 'advisor', description: 'Показать/скрыть подсказку модели над вводом' })
+    await refreshLimits($)
+
+    return next(e)
+  })
+
+  on('command.run', { command: 'spend' }, async $ => {
+    await refreshLimits($)
+    await $.ui.open({ id: PANE, title: 'Расход сессии' })
+
+    return { text: 'Панель расхода открыта.' }
+  })
+
+  on('command.run', { command: 'advisor' }, async $ => {
+    const isHidden = await update($, hiddenAtom, v => !v)
+
+    return { text: isHidden ? 'Подсказка скрыта.' : 'Подсказка включена.' }
+  })
+
+  // Advise while the person types: heuristic at once, Haiku after a pause when unsure.
+  on('prompt.edit', async ($, e, next) => {
+    const box = await next(e)
+    draft = box.text
+    // An old verdict no longer fits once the draft is cleared or rewritten.
+    const current = await read($, adviceAtom)
+    if (current !== null && !draft.trim().startsWith(judged.slice(0, Math.min(judged.length, 20)))) {
+      await update($, adviceAtom, () => null)
+    }
+
+    return box
+  })
+
+  on('prompt.submit', async ($, e, next) => {
+    pending?.cancel()
+    pending = null
+    // A one-turn choice that already served a turn is spent.
+    if (choiceUsed) {
+      choiceUsed = false
+      const left = await read($, choiceAtom)
+      if (left !== null && !left.isPersistent) await update($, choiceAtom, () => null)
+    }
+    if (e.turnId === undefined) {
+      // e.text carries what the engine adds around the prompt; judge what the person typed.
+      const typed = userText(e.text)
+      const usd = (await $.session.usage()).cost?.usd ?? 0
+      turn = { prompt: typed.slice(0, 120), usdStart: usd, tokens: zero(), tools: {}, model: '' }
+      // First message of the chat: nothing could be shown before it, so pick for it once.
+      if ((await $.session.turns()) === 0 && (await read($, choiceAtom)) === null && !typed.startsWith('/')) {
+        const a = classify(typed)
+        await update($, choiceAtom, () => ({ model: a.model, effort: a.effort, mode: a.mode, fast: a.fast, isPersistent: false }))
+        const tips = [`Автовыбор для 1-го сообщения: ${short(a.model)} · ${a.effort} — ${a.reason}`]
+        if (a.mode !== 'default') tips.push(`советую режим ${MODE_HINT[a.mode]} (Shift+Tab)`)
+        $.ui.toast(tips.join(' · '), { timeoutMs: 7000 })
+      }
+    }
+    await update($, adviceAtom, () => null)
+    await update($, editingAtom, () => false)
+
+    return next(e)
+  })
+
+  // Apply the chosen model/effort to main-thread requests and count every request's tokens.
+  on('turn.step', async function* ($, e, next) {
+    const choice = e.agentId === undefined ? await read($, choiceAtom) : null
+    const event = choice
+      ? { ...e, model: MODEL_IDS[choice.model], ...(choice.model === 'haiku' ? {} : { effort: choice.effort }) }
+      : e
+    if (choice !== null && !choice.isPersistent) choiceUsed = true
+    const result = yield* next(event)
+    const usage = result.usage
+    if (usage === null) return result
+
+    const spent = total(add(zero(), usage))
+    const names = e.agentId === undefined ? result.toolUses.map(t => t.name) : ['Agent (субагент)']
+    await update($, ledgerAtom, l => {
+      const byTool = { ...l.byTool }
+      for (const name of names) {
+        const row = byTool[name] ?? { calls: 0, tokens: 0 }
+        byTool[name] = { calls: row.calls + (e.agentId === undefined ? 1 : 0), tokens: row.tokens + Math.round(spent / names.length) }
+      }
+      return { ...l, byTool, byModel: { ...l.byModel, [usage.model]: add(l.byModel[usage.model] ?? zero(), usage) } }
+    })
+    if (turn !== null) {
+      turn.tokens = add(turn.tokens, usage)
+      if (e.agentId === undefined) turn.model = usage.model
+      for (const name of names) turn.tools[name] = (turn.tools[name] ?? 0) + 1
+    }
+
+    return result
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    if (e.agentId !== undefined) return next(e)
+
+    await refreshLimits($)
+    const limits = await read($, limitsAtom)
+    if (turn !== null) {
+      const done = turn
+      const usd = limits.usd === null ? 0 : Math.max(0, limits.usd - done.usdStart)
+      await update($, ledgerAtom, l => ({
+        ...l,
+        turns: [...l.turns, { prompt: done.prompt, model: done.model, tokens: done.tokens, usd, tools: done.tools }].slice(-50),
+      }))
+      turn = null
+    }
+    const choice = await read($, choiceAtom)
+    if (choice !== null && !choice.isPersistent) await update($, choiceAtom, () => null)
+
+    return next(e)
+  })
+
+  on('session.measure', async ($, e, next) => {
+    const five = e.rateLimits.find(w => w.kind === 'five_hour')
+    await update($, limitsAtom, l => ({
+      ...l,
+      context: e.context.percent ?? l.context,
+      windows: e.rateLimits.map(w => ({ kind: w.kind, percentUsed: w.percentUsed, resetsAt: w.resetsAt })),
+    }))
+    const level = five === undefined ? 0 : five.percentUsed >= 90 ? 90 : five.percentUsed >= 80 ? 80 : 0
+    if (level > warned) {
+      warned = level
+      $.ui.toast(`Лимит 5ч использован на ${five?.percentUsed}% — переходите на Haiku/Sonnet и low effort`)
+    }
+
+    return next(e)
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey || (await read($, hiddenAtom))) return next(e)
+
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const advice = await read($, adviceAtom)
+    const choice = await read($, choiceAtom)
+    const isEditing = await read($, editingAtom)
+    const limits = await read($, limitsAtom)
+    const ledger = await read($, ledgerAtom)
+    const chatTokens = Object.values(ledger.byModel).reduce((s, t) => s + total(t), 0) + total(ledger.advisor)
+    const base: Choice = choice ?? {
+      model: advice?.model ?? 'sonnet',
+      effort: advice?.effort ?? 'medium',
+      mode: advice?.mode ?? 'default',
+      fast: advice?.fast ?? false,
+      isPersistent: false,
+    }
+    const setPick = (patch: Partial<Choice>) => update($, choiceAtom, () => ({ ...base, ...patch }))
+
+    return (
+      <Box flexDirection="column">
+        {advice === null && !e.props.isWorking && (
+          <Box gap={2}>
+            <Button key="check" label="🔍 Проверить промпт" onPress={() => checkPrompt($)} />
+            <Text dimColor>подберу самую дешёвую модель, которая справится</Text>
+          </Box>
+        )}
+        {advice !== null && !e.props.isWorking && (
+          <Box flexDirection="column">
+            <Box gap={2}>
+              <Text bold>💡 Совет</Text>
+              <Text>
+                <Text dimColor>Модель </Text>
+                <Text bold color={MODEL_COLOR[advice.model]}>{short(advice.model)}</Text>
+              </Text>
+              <Text>
+                <Text dimColor>Сила </Text>
+                <Text color="#d0a050">{dots(advice.effort)}</Text>
+                <Text> {EFFORT_RU[advice.effort]}</Text>
+              </Text>
+              <Text>
+                <Text dimColor>Режим </Text>
+                <Text bold>{MODE_HINT[advice.mode]}</Text>
+                {advice.fast ? <Text color="#d0a050"> ⚡fast</Text> : null}
+              </Text>
+              <Button
+                key="apply"
+                label="Применить"
+                onPress={() => apply($, { model: advice.model, effort: advice.effort, mode: advice.mode, fast: advice.fast, isPersistent: false })}
+              />
+              <Button key="recheck" label="↻" plain onPress={() => checkPrompt($)} />
+              <Button key="own" label={isEditing ? 'Готово' : 'Своё'} onPress={() => update($, editingAtom, v => !v)} />
+            </Box>
+            <Text dimColor>
+              {'   '}↳ {advice.reason} · {advice.source === 'haiku' ? 'оценил Haiku' : 'по ключевым словам'}
+            </Text>
+          </Box>
+        )}
+        {isEditing && !e.props.isWorking && (
+          <Box flexDirection="column">
+            <Box gap={1}>
+              <Text dimColor>модель</Text>
+              {MODELS.map(m => (
+                <Button key={`m-${m}`} label={m === base.model ? `[${short(m)}]` : short(m)} plain onPress={() => setPick({ model: m })} />
+              ))}
+            </Box>
+            <Box gap={1}>
+              <Text dimColor>сила</Text>
+              {EFFORTS.map(f => (
+                <Button key={`f-${f}`} label={f === base.effort ? `[${f}]` : f} plain onPress={() => setPick({ effort: f })} />
+              ))}
+            </Box>
+            <Box gap={1}>
+              <Text dimColor>режим</Text>
+              {MODES.map(m => (
+                <Button key={`r-${m}`} label={m === base.mode ? `[${MODE_HINT[m]}]` : MODE_HINT[m]} plain onPress={() => setPick({ mode: m })} />
+              ))}
+            </Box>
+          </Box>
+        )}
+        {choice !== null && (
+          <Box gap={1}>
+            <Text color="success">
+              ✔ {short(choice.model)} · {choice.effort} {choice.isPersistent ? '(закреплено)' : '(на 1 ход)'}
+            </Text>
+            <Button key="pin" label={choice.isPersistent ? 'Открепить' : 'Закрепить'} plain onPress={() => setPick({ isPersistent: !choice.isPersistent })} />
+            <Button key="reset" label="Сбросить" plain onPress={() => update($, choiceAtom, () => null)} />
+          </Box>
+        )}
+        {(limits.windows.length > 0 || limits.context !== null || limits.usd !== null) && (
+          <Box gap={3}>
+            <Box gap={2}>
+              <Text bold color={PINK}>
+                ▌Этот чат
+              </Text>
+              {limits.context !== null && (
+                <Text>
+                  <Text color={PINK}>Контекст </Text>
+                  <Text color={PINK}>{bar(limits.context)}</Text>
+                  <Text bold color={PINK}> {Math.round(limits.context)}%</Text>
+                </Text>
+              )}
+              <Text>
+                <Text color={PINK}>Токены </Text>
+                <Text bold color={PINK}>{fmt(chatTokens)}</Text>
+              </Text>
+              {limits.usd !== null && limits.usd > 0 && (
+                <Text>
+                  <Text color={PINK}>Стоимость </Text>
+                  <Text bold color={PINK}>${limits.usd.toFixed(2)}</Text>
+                </Text>
+              )}
+              <Text dimColor>/spend</Text>
+            </Box>
+            <Box flexGrow={1} />
+            {limits.windows.length > 0 && (
+              <Box gap={2}>
+                <Text bold dimColor>
+                  Общее ▐
+                </Text>
+                {limits.windows.map(w => (
+                  <Text>
+                    <Text dimColor>{w.kind === 'five_hour' ? 'Лимит 5ч ' : w.kind === 'seven_day' ? 'Неделя ' : `${w.kind} `}</Text>
+                    <Text color={levelColor(w.percentUsed)}>{bar(w.percentUsed)}</Text>
+                    <Text bold> {Math.round(w.percentUsed)}%</Text>
+                  </Text>
+                ))}
+              </Box>
+            )}
+          </Box>
+        )}
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const { Box, Text } = $.ui.resolve(e)
+    const ledger = await read($, ledgerAtom)
+    const limits = await read($, limitsAtom)
+
+    const models = Object.entries(ledger.byModel).sort((a, b) => total(b[1]) - total(a[1]))
+    const allTokens = models.reduce((s, [, t]) => s + total(t), 0) || 1
+    const tools = Object.entries(ledger.byTool).sort((a, b) => b[1].tokens - a[1].tokens).slice(0, 10)
+    const turns = [...ledger.turns].sort((a, b) => b.usd - a.usd || total(b.tokens) - total(a.tokens)).slice(0, 8)
+
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Box flexDirection="column">
+          <Text bold>Итого</Text>
+          <Text>
+            Стоимость: {limits.usd === null ? '—' : `$${limits.usd.toFixed(3)}`} · контекст:{' '}
+            {limits.context === null ? '—' : `${Math.round(limits.context)}%`}
+          </Text>
+          {limits.windows.map(w => (
+            <Text>
+              Лимит {windowLabel(w.kind)}: {w.percentUsed}%{w.resetsAt ? ` (сброс ${w.resetsAt.slice(0, 16).replace('T', ' ')})` : ''}
+            </Text>
+          ))}
+          {total(ledger.advisor) > 0 && <Text dimColor>Сам советчик (Haiku): {fmt(total(ledger.advisor))} ток.</Text>}
+        </Box>
+        <Box flexDirection="column">
+          <Text bold>По моделям</Text>
+          {models.length === 0 && <Text dimColor>Пока нет запросов.</Text>}
+          {models.map(([model, t]) => (
+            <Text>
+              {short(model).padEnd(8)} {fmt(total(t)).padStart(7)} ({Math.round((total(t) / allTokens) * 100)}%) · вход {fmt(t.input)} · выход {fmt(t.output)} · кэш {fmt(t.cacheRead)}/{fmt(t.cacheWrite)}
+            </Text>
+          ))}
+        </Box>
+        <Box flexDirection="column">
+          <Text bold>На что ушло (инструменты)</Text>
+          {tools.length === 0 && <Text dimColor>Инструменты не вызывались.</Text>}
+          {tools.map(([name, s]) => (
+            <Text>
+              {name.padEnd(20)} {String(s.calls).padStart(3)} выз. · {fmt(s.tokens)} ток.
+            </Text>
+          ))}
+        </Box>
+        <Box flexDirection="column">
+          <Text bold>Самые дорогие ходы</Text>
+          {turns.length === 0 && <Text dimColor>Ходов ещё не было.</Text>}
+          {turns.map(t => (
+            <Text wrap="truncate-end">
+              ${t.usd.toFixed(3)} · {fmt(total(t.tokens))} · {short(t.model)} · «{t.prompt}»
+            </Text>
+          ))}
+        </Box>
+      </Box>
+    )
+  })
+}

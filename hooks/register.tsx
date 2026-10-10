@@ -219,6 +219,10 @@ export const register: Register = on => {
     // A new chat starts from what earlier chats measured: calibration and lifetime savings.
     const kept = (await $.store.get('lifetime')) as Lifetime | null | undefined
     if (kept) await update($, ledgerAtom, l => ({ ...l, ...kept.cal, life: kept.life }))
+    // Limits move with other chats and devices too: re-read them while idle, not only after a turn.
+    $.clock.every(30_000, () => {
+      void refreshLimits($)
+    })
 
     return next(e)
   })

@@ -7,7 +7,7 @@ export const ASK_HAIKU_BELOW = 0.6
 // «what does this function do» is a question even though it names a function.
 const ARCH = /\b(architect\w*|system design|research|security|audit|from scratch|whole (repo|project|codebase))\b|архитектур|спроектируй|проектир|исследу|безопасност|аудит|с нуля|весь проект|всего проекта|всю кодовую/i
 const MULTI = /\b(refactor|migrat\w*|feature|implement|integrat\w*|optimi[sz]e|performance)\b|рефактор|миграц|фич|реализуй|внедри|интеграц|оптимиз|производительн|\bмод\b|плагин/i
-const EDIT = /\b(fix|add|change|update|make|write|create|remove|delete|move|replace|rename|set ?up|connect)\b|исправ|почини|добав|измени|поменяй|обнови|сделай|переделай|допиши|дополни|напиши|создай|удали|убери|перенеси|замени|подключи|настрой|переимен/i
+const EDIT = /\b(fix|add|change|update|make|write|create|remove|delete|move|replace|rename|set ?up|connect)\b|исправ|почини|добав|измени|поменяй|обнови|сделай|переделай|допиши|дополни|напиши|создай|удали|убери|перенеси|замени|подключи|настрой|переимен|перепиш|rewrite/i
 const ANALYSIS = /\b(review|check|analy[sz]e|compare|investigate|debug)\b|провер|проанализ|найди|сравни|разберись|отлад/i
 const ASK = /\?|\b(what|why|how|where|which|explain|translate|summari[sz]e)\b|что |как |почему|зачем|сколько|где |какой|какая|какие|объясни|расскажи|кратко|переведи/i
 const BUG = /\b(bug|error|crash|fails?)\b|баг|ошибк|не работает|сломал|падает/i

@@ -1,98 +1,113 @@
 # model-advisor
 
-Мод для Claude Code. Подсказывает самую дешёвую модель, силу (effort) и режим, которые справятся с промптом, и показывает, куда ушли токены и лимиты сессии.
+**English** · [Русский](README.ru.md)
 
-## Установка
+A Claude Code mod that suggests the cheapest model, effort and mode that can handle a task, and shows where your tokens and limits go.
+
+## Install
 
 ```
 /plugin marketplace add Jaroslawczyk/ClaudeModes
 /plugin install model-advisor@claude-modes
 ```
 
-## Что показывает
+Changes to the mod take effect in a new session (a new chat).
 
-**Совет над полем ввода.** Пока вы печатаете, мод оценивает промпт:
-- сразу: эвристика по ключевым словам и длине (бесплатно);
-- по кнопке «Проверить промпт» или «↻ Перепроверить»: короткий запрос к Haiku (около 120 токенов ответа) для длинных промптов.
+## What you see
 
-Совет: модель, сила (●○○○○), режим, причина выбора. Кнопки: «Применить» (на следующий ход), «Своё…» (ручной выбор), «Закрепить» (на всю сессию), «Сбросить».
+Two blocks sit above the prompt box. The interface is in Russian.
 
-**Блок статистики над полем ввода.**
-- «Этот чат»: заполненность контекста, токены, стоимость.
-- «Экономия»: сэкономлено и упущено, а также итог за всё время по всем чатам.
-- «Лимиты»: 5 часов и неделя; у каждого окна показано, через сколько оно сбросится (например «сброс через 2ч 15м» или «сброс через 3д 4ч»). Обновляются сами раз в 30 секунд, даже если вы ничего не пишете (лимиты двигаются и из других чатов и устройств).
-- «Граф»: кнопка «Построить / обновить граф» запускает `graphify update .` в папке сессии. Это только разбор кода, без LLM и без токенов. Нужен установленный graphify.
-  Если в папке уже есть граф (`graphify-out/graph.json`), он обновляется сам в конце хода, в котором Claude правил файлы (Edit/Write). Ходы без правок граф не трогают, а новый граф автоматически не строится.
+**Advice.** The «🔍 Проверить промпт» (Check prompt) button rates what you typed and shows the model, effort (●○○○○), mode and the reason.
+- «Применить» (Apply): the choice applies to the next turn.
+- «Своё…» (Custom): pick model, effort and mode by hand.
+- «Закрепить» (Pin): the choice applies until the session ends. «Сбросить» (Reset) clears it.
+- The first message of a chat gets a model picked automatically.
 
-**Панель `/spend`.** Расход по моделям, по инструментам (сколько раз вызывались и сколько токенов ушло), самые дорогие ходы.
+**Stats.** Four rows:
 
-Команды: `/spend` открывает панель, `/advisor` скрывает или показывает совет.
-
-## Что стоит запросов к модели, а что нет
-
-**Совет (какую модель выбрать):**
-- Сначала эвристика: локальная проверка по глаголам, длине и числу файлов, без запросов к модели, бесплатно. Она же автоматически выбирает модель для первого сообщения в чате.
-- Haiku только по кнопке «Проверить промпт» или «↻ Перепроверить», только если эвристика не уверена (уверенность ниже 0.6) и промпт длиннее 15 символов: Haiku с low effort, максимум 120 токенов ответа, промпт обрезается до 4000 символов. Ответ кэшируется, повторная проверка того же текста бесплатна.
-- Пока вы печатаете, запросы не отправляются.
-
-**Экономия, токены, лимиты:** чистая арифметика внутри мода, без запросов к модели. Токены берутся из того, что движок сообщает после каждого шага, умножаются на зашитые цены API; проценты лимита берутся из данных сессии.
-
-Вызовы Haiku учитываются отдельно, как «Сам советчик (Haiku)» в панели `/spend`.
-
-## Как выбирается модель
-
-Правило: **начинать с самой дешёвой модели и подниматься только при признаках сложности.** Вид задачи определяется по глаголам, а не по существительным: «что делает эта функция» остаётся вопросом, хотя в нём есть слово «функция». Правила лежат в `hooks/classify.ts`, проверяются сверху вниз:
-
-| Признак в промпте | Что выбирает |
+| Row | What it shows |
 | --- | --- |
-| архитектура, аудит, безопасность, `с нуля`, `весь проект` | Opus, high, режим plan |
-| рефакторинг, миграция, фича, `реализуй`, интеграция, мод/плагин или 3 и больше шагов (глаголов или пунктов списка) | Sonnet, medium, режим plan |
-| одна маленькая правка: до 200 символов, не больше 1 файла, нет кода, нет слов про ошибки, одно действие (`добавь`, `переименуй`, `допиши`, `напиши`) | Haiku, medium, acceptEdits |
-| правка, где нужно сначала разобраться (`проверь и измени`), с ошибкой или с несколькими файлами | Sonnet, medium, acceptEdits |
-| ошибка без просьбы править (`почему падает`, `не работает`) | Sonnet, medium, режим по умолчанию |
-| анализ кода (`проверь`, `сравни`, `найди`) с файлом или кодом | Sonnet, low |
-| проверка или сравнение без кода, вопрос, обсуждение, текст | Haiku, low или medium |
-| длинный запрос (300+ символов) без явной задачи | Sonnet, low; уверенность низкая, спросит Haiku |
+| Этот чат (This chat) | context fill, tokens, cost |
+| Экономия (Savings) | saved and missed, for this chat and all time |
+| Лимиты (Limits) | 5-hour and weekly limits, time until reset (`2ч 15м`, `3д 4ч`); refreshes itself every 30 seconds |
+| Граф (Graph) | a button that runs `graphify update .` for the session folder |
 
-Что поднимает выбор вверх (и только это):
-- Слова, что прошлая попытка не удалась (`опять`, `снова`, `не помогло`, `та же ошибка`): Haiku заменяется на Sonnet, сила на ступень выше. Дешёвая модель, которая уже промахнулась, второй раз дешёвой не берётся.
-- 4 файла и больше или промпт длиннее 1500 символов: сила на ступень выше, Haiku заменяется на Sonnet.
-- Блок кода в промпте: Haiku заменяется на Sonnet.
-- Слова `быстро`, `срочно`, `quick`, `asap` включают быстрый режим (`/fast`), но не для Opus.
+**`/spend` pane.** Spending by model, by tool, the most expensive turns, and what the advisor itself used.
 
-**Haiku спрашивается только если ключевые слова не справились** (уверенность ниже 0.6: слишком короткая или невнятная правка, длинный текст без задачи). Раньше он вызывался на любой промпт и давал другой ответ, чем эвристика: из-за этого советы были непредсказуемыми и обычно дороже. Теперь уверенный ответ эвристики не перебивается и не тратит токены. Haiku получает инструкцию при сомнении выбирать более дешёвую модель.
+Commands: `/spend` opens the pane, `/advisor` hides or shows the advice.
 
-**Предупреждение о смене модели.** Кэш контекста привязан к модели. Если сменить модель в длинном чате (от 30k токенов в контексте), весь контекст записывается в кэш заново, и первый ход может стоить дороже, чем экономия. В таких случаях к совету добавляется пометка вида «смена модели пересчитает кэш 120k ток. (+$0.28 на 1-м ходе)». Для длинных чатов выгоднее новый чат или смена модели в начале задачи.
+## How the model is chosen
 
-**Что не умеет.** Мод не знает реальной сложности задачи: «добавь сколько времени осталось до сброса» по тексту выглядит маленькой правкой, хотя на деле нужно разобраться в чужом коде. Ошибка вниз дешёвая (промахнулись, повторили на Sonnet), но не бесплатная. Поэтому совет стоит воспринимать как подсказку, а не как гарантию.
+The rule: **start with the cheapest model and move up only on signs of difficulty.**
 
-## Как считается экономия
+The kind of task is read from verbs, not nouns: "what does this function do" stays a question even though it mentions a function. The rules live in `hooks/classify.ts` and are checked top to bottom:
 
-- **Сэкономлено.** Для каждого шага хода мод считает, сколько стоили те же токены на модели чата и на фактически использованной модели. Разница по ценам API и есть «сэкономлено». Работает, только если вы выбрали модель дешевле базовой.
-- **Упущено.** Если совет предлагал модель дешевле, но вы её не применили, разница учитывается как «упущено».
-- **Перевод в проценты лимита.** На подписке `$` не списываются. Мод запоминает, сколько процентов лимита 5 часов и недели сдвинул замеренный ход, и переводит доллары в проценты по этому коэффициенту. Пока замеров мало, проценты приблизительные.
+| Signal in the prompt | Choice |
+| --- | --- |
+| architecture, audit, security, "from scratch", "whole project" | Opus, high, plan |
+| refactor, migration, feature, "implement", integration, mod or plugin; 3 or more steps | Sonnet, medium, plan |
+| one small edit: under 200 characters, at most 1 file, no code, no words about errors | Haiku, medium, accept edits |
+| an edit that needs understanding first, involves a bug, or touches several files | Sonnet, medium, accept edits |
+| a bug without a request to change code ("why does it fail") | Sonnet, medium |
+| code analysis ("check", "compare", "find") with a file or code | Sonnet, low |
+| a question, discussion, writing, comparison without code | Haiku, low or medium |
+| a long prompt (300+ characters) with no clear task | Sonnet, low; Haiku is asked to refine |
 
-Цены API в моде зашиты вручную: Haiku $0.10/$0.50, Sonnet $2/$10, Opus $4/$20 за 1M токенов (вход/выход). Если цены поменяются, их нужно обновить в `hooks/register.tsx` (`PRICES`).
+Keywords are matched in both Russian and English.
 
-Значения за всё время хранятся в `$.store` и переживают новые чаты.
+The choice moves up only in these cases:
+- **A previous attempt failed** ("again", "still", "same error", `опять`, `не помогло`): Haiku becomes Sonnet and effort goes up one step.
+- **4 or more files, or a prompt over 1,500 characters:** effort goes up one step and Haiku becomes Sonnet.
+- **A code block in the prompt:** Haiku becomes Sonnet.
 
-## Насколько это полезно
+Words like "quick", "asap", `быстро`, `срочно` turn on fast mode (`/fast`), except for Opus.
 
-Честно, что известно и что нет:
+**When Haiku is asked.** Only when the keywords give no confident answer (confidence below 0.6): a very short or vague edit, or a long text with no task. A confident heuristic answer is never overridden and costs no tokens, so the same prompt always gets the same advice.
 
-- **Экономия реальная только при смене модели.** Если чат на Haiku, экономить дальше не на чем, и строка «сэкономлено» остаётся нулевой. Это ожидаемо, а не ошибка.
-- **Сэкономлено считается гипотетически.** Это то, что те же токены стоили бы на модели чата. Деньги на подписке не возвращаются, зато видно, какой выбор модели в принципе дешевле.
-- **Совет может ошибаться.** Эвристика грубая. Haiku-оценка стоит токенов и даёт ошибки на коротких промптах. Модель не проверяет, справится ли дешёвая модель с задачей на практике.
-- **Сам советчик тратит токены.** Вызовы Haiku учитываются в статистике отдельно («Сам советчик»).
-- **Проценты лимита приблизительные.** Они зависят от того, как лимит сдвигается между ходами.
-- **Эффективность не замерена.** Я не измерял, сколько токенов мод экономит на ваших задачах в среднем. Чтобы получить цифру, нужно несколько недель работы с включённым модом и сравнить `/spend` по моделям до и после.
+**Model switch warning.** The context cache belongs to a model. Switching models in a long chat (30k+ tokens of context) writes the whole context to the cache again, and the first turn can cost more than the switch saves. The advice then carries a note such as «смена модели пересчитает кэш 120k ток. (+$0.28 на 1-м ходе)» ("switching re-writes 120k tokens of cache, +$0.28 on the first turn"). In a long chat, starting a new chat is cheaper.
 
-**Итого:** мод полезен как видимость: показывает, где уходят токены и лимиты, и подсказывает дешёвый выбор для простых задач. Гарантированной экономии он не даёт, а экономия зависит от того, применяете ли вы совет.
+## Graph (graphify)
 
-## Структура
+- The button in the «Граф» row runs `graphify update .` in the session folder. It only parses code: no LLM, no tokens. Requires graphify (the `graphify` command on PATH).
+- If the folder already has a graph (`graphify-out/graph.json`), it updates itself at the end of any turn in which Claude edited files with Edit or Write.
+- Turns without edits leave the graph alone. A new graph is never built automatically, only with the button.
+- Edits made through Bash (scripts, `sed`) are not noticed.
 
-- `hooks/register.tsx`: логика, панель и блок статистики.
-- `hooks/classify.ts`: эвристика и разбор ответа Haiku.
-- `hooks/advisor.test.ts`: тесты.
-- `types/index.d.ts`: типы состояния мода.
-- `.claude-plugin/`: манифест и marketplace.
+## What costs model calls
+
+| What | Cost |
+| --- | --- |
+| Keyword advice | free, computed locally |
+| Haiku advice | only on the button and only when the heuristic is unsure; low effort, at most 120 output tokens, prompt cut to 4,000 characters; re-checking the same text comes from a cache |
+| Savings, tokens, limits | free: arithmetic on data the engine reports after each step |
+| Graph | free: code parsing without an LLM |
+
+Nothing is sent while you type. Haiku calls show up as a separate line in `/spend`.
+
+## How savings are counted
+
+- **Saved:** what the same tokens would have cost on the chat's model, minus what they cost on the model you chose. Uses API prices.
+- **Missed:** the advice offered a cheaper model, but it was not applied.
+- **Limit percentages:** on a subscription, dollars are not charged. The mod measures how many percent of the 5-hour limit one API-priced dollar moves, and converts savings into percent. Measurements carry over between chats.
+
+Prices are hard-coded in `hooks/register.tsx` (`PRICES`), per 1M tokens, input and output: Haiku $0.10 / $0.50, Sonnet $2 / $10, Opus $4 / $20. Update them by hand if prices change.
+
+## How useful is it
+
+- **Savings appear only when you switch to a cheaper model.** If the chat is already on Haiku, there is nothing to save and "saved" stays at zero.
+- **"Saved" is hypothetical.** It is a difference in API prices, not money returned. It shows which choice is cheaper.
+- **The advice can be wrong.** The mod sees only the prompt text, not the real difficulty. "Add the time until the limit resets" looks like a small edit but may need reading unfamiliar code. Erring low is usually cheap (retry on Sonnet), but not free.
+- **Limit percentages are approximate** until enough turns are measured.
+- **Average savings are not measured.** To find out, compare `/spend` by model over a few weeks with and without the mod.
+
+In short: the mod shows where tokens and limits go and nudges you toward a cheaper model when the task is simple. It does not guarantee savings; those depend on whether you apply the advice.
+
+## Files
+
+| File | Contents |
+| --- | --- |
+| `hooks/register.tsx` | logic, blocks above the prompt, the `/spend` pane |
+| `hooks/classify.ts` | model selection rules and Haiku reply parsing |
+| `hooks/advisor.test.ts` | tests |
+| `types/index.d.ts` | state types |
+| `.claude-plugin/` | manifest and marketplace |

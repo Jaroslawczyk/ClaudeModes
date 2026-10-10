@@ -59,12 +59,33 @@ const GRAPH_RU: Record<GraphState['status'], string> = {
   },
 }
 
+// The hooks' environment may not have the user's PATH (on Windows graphify lives in ~/.local/bin),
+// so try the bare name first and then the usual install folders.
+async function runGraphify($: EngineInterface, cwd: string) {
+  const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? ''
+  const candidates = [
+    'graphify',
+    `${home}/.local/bin/graphify.exe`,
+    `${home}/.local/bin/graphify`,
+    `${home}/AppData/Roaming/Python/Scripts/graphify.exe`,
+  ]
+  let last: unknown = null
+  for (const bin of candidates) {
+    try {
+      return await $.process.run([bin, 'update', '.'], { cwd, timeoutMs: 600_000 })
+    } catch (err) {
+      last = err
+    }
+  }
+  throw last
+}
+
 // One click: AST-only graphify rebuild of the session's folder (no LLM, no token cost).
 async function buildGraph($: EngineInterface, isAuto = false): Promise<void> {
   if ((await read($, graphAtom)).status === 'running') return
   await update($, graphAtom, () => ({ status: 'running', message: '' }))
   try {
-    const r = await $.process.run(['graphify', 'update', '.'], { cwd: await $.session.cwd(), timeoutMs: 600_000 })
+    const r = await runGraphify($, await $.session.cwd())
     const ok = r.exitCode === 0
     const tail = (ok ? r.stdout : r.stderr || r.stdout).trim().split('\n').slice(-1)[0] ?? ''
     await update($, graphAtom, () => ({ status: ok ? 'done' : 'failed', message: tail.slice(0, 120) }))

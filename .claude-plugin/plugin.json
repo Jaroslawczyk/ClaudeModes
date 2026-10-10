@@ -1,6 +1,6 @@
 {
   "name": "model-advisor",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Suggests the cheapest fitting model, effort and mode for a prompt, and shows where the session's limits went",
   "types": "./types/index.d.ts"
 }

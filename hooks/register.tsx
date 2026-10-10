@@ -31,10 +31,21 @@ const ledgerAtom = atom({ plugin: 'model-advisor', key: 'ledger' } as const, EMP
 const limitsAtom = atom({ plugin: 'model-advisor', key: 'limits' } as const, { usd: null, context: null, windows: [] })
 const graphAtom = atom({ plugin: 'model-advisor', key: 'graph' } as const, { status: 'idle', message: '' } as GraphState)
 
+const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
+
+// Auto-update only where a graph already exists: building a new one stays a deliberate click.
+async function hasGraph($: EngineInterface): Promise<boolean> {
+  try {
+    return (await $.fs.stat(`${await $.session.cwd()}/graphify-out/graph.json`)).kind === 'file'
+  } catch {
+    return false
+  }
+}
+
 const GRAPH_RU: Record<GraphState['status'], string> = { idle: '', running: 'строю граф', done: 'граф обновлён', failed: 'ошибка' }
 
 // One click: AST-only graphify rebuild of the session's folder (no LLM, no token cost).
-async function buildGraph($: EngineInterface): Promise<void> {
+async function buildGraph($: EngineInterface, isAuto = false): Promise<void> {
   if ((await read($, graphAtom)).status === 'running') return
   await update($, graphAtom, () => ({ status: 'running', message: '' }))
   try {
@@ -42,7 +53,7 @@ async function buildGraph($: EngineInterface): Promise<void> {
     const ok = r.exitCode === 0
     const tail = (ok ? r.stdout : r.stderr || r.stdout).trim().split('\n').slice(-1)[0] ?? ''
     await update($, graphAtom, () => ({ status: ok ? 'done' : 'failed', message: tail.slice(0, 120) }))
-    $.ui.toast(ok ? 'graphify: граф обновлён' : 'graphify: ошибка сборки')
+    if (!isAuto || !ok) $.ui.toast(ok ? 'graphify: граф обновлён' : 'graphify: ошибка сборки')
   } catch (err) {
     await update($, graphAtom, () => ({ status: 'failed', message: String(err).slice(0, 120) }))
     $.ui.toast('graphify: не запустился (есть ли graphify в PATH?)')
@@ -231,6 +242,8 @@ async function apply($: EngineInterface, choice: Choice): Promise<void> {
 export const register: Register = on => {
   let pending: { cancel: () => void } | null = null
   let warned = 0
+  // Set when this turn changed files; the graph is refreshed once, at the turn's end.
+  let edited = false
   let choiceUsed = false
   let adviceAtSubmit: Advice | null = null
   let turn: {
@@ -356,6 +369,7 @@ export const register: Register = on => {
         await persist($, await read($, ledgerAtom))
       }
     }
+    if (e.agentId === undefined && result.toolUses.some(t => EDIT_TOOLS.has(t.name))) edited = true
     const names = e.agentId === undefined ? result.toolUses.map(t => t.name) : ['Agent (субагент)']
     await update($, ledgerAtom, l => {
       const byTool = { ...l.byTool }
@@ -403,6 +417,10 @@ export const register: Register = on => {
     }
     const choice = await read($, choiceAtom)
     if (choice !== null && !choice.isPersistent) await update($, choiceAtom, () => null)
+    if (edited) {
+      edited = false
+      if (await hasGraph($)) void buildGraph($, true)
+    }
 
     return next(e)
   })

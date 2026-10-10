@@ -59,6 +59,8 @@ export type Limits = {
   windows: { kind: string; percentUsed: number; resetsAt?: string }[]
 }
 
+export type GraphState = { status: 'idle' | 'running' | 'done' | 'failed'; message: string }
+
 declare module 'claude-code' {
   interface PluginState {
     'model-advisor': {
@@ -68,6 +70,7 @@ declare module 'claude-code' {
       isHidden: boolean
       ledger: Ledger
       limits: Limits
+      graph: GraphState
     }
   }
 }

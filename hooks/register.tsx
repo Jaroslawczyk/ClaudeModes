@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Advice, Choice, Effort, Ledger, Limits, Mode, ModelName, Tokens } from '../types'
+import type { Advice, Choice, Effort, GraphState, Ledger, Limits, Mode, ModelName, Tokens } from '../types'
 import { ADVISOR_PROMPT, classify, parseAdvice } from './classify'
 
 const PANE = 'model-advisor-spend'
@@ -29,6 +29,25 @@ const editingAtom = atom({ plugin: 'model-advisor', key: 'isEditing' } as const,
 const hiddenAtom = atom({ plugin: 'model-advisor', key: 'isHidden' } as const, false)
 const ledgerAtom = atom({ plugin: 'model-advisor', key: 'ledger' } as const, EMPTY_LEDGER)
 const limitsAtom = atom({ plugin: 'model-advisor', key: 'limits' } as const, { usd: null, context: null, windows: [] })
+const graphAtom = atom({ plugin: 'model-advisor', key: 'graph' } as const, { status: 'idle', message: '' } as GraphState)
+
+const GRAPH_RU: Record<GraphState['status'], string> = { idle: '', running: 'строю граф', done: 'граф обновлён', failed: 'ошибка' }
+
+// One click: AST-only graphify rebuild of the session's folder (no LLM, no token cost).
+async function buildGraph($: EngineInterface): Promise<void> {
+  if ((await read($, graphAtom)).status === 'running') return
+  await update($, graphAtom, () => ({ status: 'running', message: '' }))
+  try {
+    const r = await $.process.run(['graphify', 'update', '.'], { cwd: await $.session.cwd(), timeoutMs: 600_000 })
+    const ok = r.exitCode === 0
+    const tail = (ok ? r.stdout : r.stderr || r.stdout).trim().split('\n').slice(-1)[0] ?? ''
+    await update($, graphAtom, () => ({ status: ok ? 'done' : 'failed', message: tail.slice(0, 120) }))
+    $.ui.toast(ok ? 'graphify: граф обновлён' : 'graphify: ошибка сборки')
+  } catch (err) {
+    await update($, graphAtom, () => ({ status: 'failed', message: String(err).slice(0, 120) }))
+    $.ui.toast('graphify: не запустился (есть ли graphify в PATH?)')
+  }
+}
 
 function zero(): Tokens {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
@@ -429,6 +448,7 @@ export const register: Register = on => {
     const setPick = (patch: Partial<Choice>) => update($, choiceAtom, () => ({ ...base, ...patch }))
 
     const life = ledger.life ?? { saved: 0, missed: 0 }
+    const graph = await read($, graphAtom)
     const label = (text: string) => (
       <Box width={11}>
         <Text bold color={PINK}>{text}</Text>
@@ -557,6 +577,21 @@ export const register: Register = on => {
                 ))}
               </Box>
             )}
+            <Box gap={3}>
+              {label('Граф')}
+              <Button
+                key="graphify-build"
+                label={graph.status === 'running' ? 'Строю граф…' : 'Построить / обновить граф'}
+                onPress={() => {
+                  void buildGraph($)
+                }}
+              />
+              <Text dimColor>
+                {graph.status === 'idle'
+                  ? 'graphify update . — только разбор кода, без LLM и токенов'
+                  : `${GRAPH_RU[graph.status]}${graph.message ? ` — ${graph.message}` : ''}`}
+              </Text>
+            </Box>
           </Box>
         )}
       </Box>

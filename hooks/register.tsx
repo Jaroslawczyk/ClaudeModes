@@ -73,6 +73,21 @@ function family(model: string): ModelName | null {
   return m ? (m[0] as ModelName) : null
 }
 
+function windowPct(windows: Limits['windows'], kind: string): number | null {
+  return windows.find(w => w.kind === kind)?.percentUsed ?? null
+}
+
+// $ turned into limit % by what this chat measured; null until a turn has moved the limit.
+export function asLimitPct(usd: number, ledger: Ledger, kind: '5h' | '7d'): number | null {
+  const pct = kind === '5h' ? ledger.cal5h ?? 0 : ledger.cal7d ?? 0
+  const spent = ledger.calUsd ?? 0
+  return spent > 0 && pct > 0 ? (usd * pct) / spent : null
+}
+
+function pctText(p: number): string {
+  return p < 0.1 ? '<0.1%' : `${p.toFixed(1)}%`
+}
+
 // What the same tokens cost on a model; null for one with no known price (e.g. Fable).
 export function priceOf(model: string, t: Tokens): number | null {
   const f = family(model)
@@ -173,7 +188,16 @@ export const register: Register = on => {
   let warned = 0
   let choiceUsed = false
   let adviceAtSubmit: Advice | null = null
-  let turn: { prompt: string; usdStart: number; tokens: Tokens; tools: Record<string, number>; model: string } | null = null
+  let turn: {
+    prompt: string
+    usdStart: number
+    tokens: Tokens
+    tools: Record<string, number>
+    model: string
+    priced: number
+    w5: number | null
+    w7: number | null
+  } | null = null
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'spend', description: 'Где ушли токены и лимиты этой сессии' })
@@ -222,7 +246,17 @@ export const register: Register = on => {
       // e.text carries what the engine adds around the prompt; judge what the person typed.
       const typed = userText(e.text)
       const usd = (await $.session.usage()).cost?.usd ?? 0
-      turn = { prompt: typed.slice(0, 120), usdStart: usd, tokens: zero(), tools: {}, model: '' }
+      const before = (await read($, limitsAtom)).windows
+      turn = {
+        prompt: typed.slice(0, 120),
+        usdStart: usd,
+        tokens: zero(),
+        tools: {},
+        model: '',
+        priced: 0,
+        w5: windowPct(before, 'five_hour'),
+        w7: windowPct(before, 'seven_day'),
+      }
       // First message of the chat: nothing could be shown before it, so pick for it once.
       if ((await $.session.turns()) === 0 && (await read($, choiceAtom)) === null && !typed.startsWith('/')) {
         const a = classify(typed)
@@ -275,6 +309,7 @@ export const register: Register = on => {
     })
     if (turn !== null) {
       turn.tokens = add(turn.tokens, usage)
+      turn.priced += priceOf(usage.model, stepTokens) ?? 0
       if (e.agentId === undefined) turn.model = usage.model
       for (const name of names) turn.tools[name] = (turn.tools[name] ?? 0) + 1
     }
@@ -289,6 +324,17 @@ export const register: Register = on => {
     const limits = await read($, limitsAtom)
     if (turn !== null) {
       const done = turn
+      // Learn how many limit % one API-priced dollar costs on this subscription.
+      const d5 = done.w5 === null ? null : (windowPct(limits.windows, 'five_hour') ?? done.w5) - done.w5
+      const d7 = done.w7 === null ? null : (windowPct(limits.windows, 'seven_day') ?? done.w7) - done.w7
+      if (done.priced > 0 && d5 !== null && d5 >= 0) {
+        await update($, ledgerAtom, l => ({
+          ...l,
+          calUsd: (l.calUsd ?? 0) + done.priced,
+          cal5h: (l.cal5h ?? 0) + d5,
+          cal7d: (l.cal7d ?? 0) + Math.max(0, d7 ?? 0),
+        }))
+      }
       const usd = limits.usd === null ? 0 : Math.max(0, limits.usd - done.usdStart)
       await update($, ledgerAtom, l => ({
         ...l,
@@ -327,7 +373,12 @@ export const register: Register = on => {
     const isEditing = await read($, editingAtom)
     const limits = await read($, limitsAtom)
     const ledger = await read($, ledgerAtom)
-    const chatTokens = Object.values(ledger.byModel).reduce((s, t) => s + total(t), 0) + total(ledger.advisor)
+    // On a subscription the saving reads as limit %, with $ beside it; elsewhere as $.
+    const amount = (usd: number) => {
+      const p = limits.windows.length > 0 ? asLimitPct(usd, ledger, '5h') : null
+      return p === null ? `$${usd.toFixed(2)}` : `${pctText(p)} лимита 5ч`
+    }
+    const chatTokens =Object.values(ledger.byModel).reduce((s, t) => s + total(t), 0) + total(ledger.advisor)
     const base: Choice = choice ?? {
       model: advice?.model ?? 'sonnet',
       effort: advice?.effort ?? 'medium',
@@ -427,13 +478,13 @@ export const register: Register = on => {
               {(ledger.saved ?? 0) > 0 && (
                 <Text>
                   <Text color="#5fb878">💰 сэкономлено </Text>
-                  <Text bold color="#5fb878">${(ledger.saved ?? 0).toFixed(2)}</Text>
+                  <Text bold color="#5fb878">{amount(ledger.saved ?? 0)}</Text>
                 </Text>
               )}
               {(ledger.missed ?? 0) > 0 && (
                 <Text>
                   <Text color="#e06060">упущено </Text>
-                  <Text bold color="#e06060">${(ledger.missed ?? 0).toFixed(2)}</Text>
+                  <Text bold color="#e06060">{amount(ledger.missed ?? 0)}</Text>
                 </Text>
               )}
               {limits.usd !== null && limits.usd > 0 && (
@@ -503,6 +554,40 @@ export const register: Register = on => {
               <Text color="#5fb878">{bar(((ledger.saved ?? 0) / ((ledger.saved ?? 0) + (ledger.missed ?? 0))) * 100, 20)}</Text>
               <Text dimColor> использовано {Math.round(((ledger.saved ?? 0) / ((ledger.saved ?? 0) + (ledger.missed ?? 0))) * 100)}% возможной экономии</Text>
             </Text>
+          )}
+          {limits.windows.length > 0 && (
+            <Box flexDirection="column">
+              {(() => {
+                const s5 = asLimitPct(ledger.saved ?? 0, ledger, '5h')
+                const m5 = asLimitPct(ledger.missed ?? 0, ledger, '5h')
+                const s7 = asLimitPct(ledger.saved ?? 0, ledger, '7d')
+                const m7 = asLimitPct(ledger.missed ?? 0, ledger, '7d')
+                if (s5 === null) {
+                  return <Text dimColor>Подписка: % лимитов появятся после ходов, которые сдвинут лимит 5ч (мод замеряет, сколько % стоит $1)</Text>
+                }
+                return (
+                  <Box flexDirection="column">
+                    <Text>
+                      <Text dimColor>Подписка, лимит 5ч: </Text>
+                      <Text bold color="#5fb878">сэкономлено {pctText(s5)}</Text>
+                      <Text dimColor> · </Text>
+                      <Text bold color="#e06060">упущено {pctText(m5 ?? 0)}</Text>
+                    </Text>
+                    {s7 !== null && (
+                      <Text>
+                        <Text dimColor>Подписка, неделя: </Text>
+                        <Text bold color="#5fb878">сэкономлено {pctText(s7)}</Text>
+                        <Text dimColor> · </Text>
+                        <Text bold color="#e06060">упущено {pctText(m7 ?? 0)}</Text>
+                      </Text>
+                    )}
+                    <Text dimColor>
+                      Замер: ${(ledger.calUsd ?? 0).toFixed(2)} по ценам API сдвинули лимит 5ч на {(ledger.cal5h ?? 0).toFixed(1)}%
+                    </Text>
+                  </Box>
+                )
+              })()}
+            </Box>
           )}
           <Text dimColor>Цены API за 1M токенов: Haiku $0.10/$0.50 · Sonnet $2/$10 · Opus $4/$20 (вход/выход)</Text>
         </Box>

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { classify, parseAdvice } from './classify'
-import { priceOf, short, total, userText } from './register'
+import { asLimitPct, priceOf,short, total, userText } from './register'
 
 describe('classify', () => {
   test('simple question goes to Haiku, low effort', async () => {
@@ -64,6 +64,12 @@ describe('savings', () => {
     expect(priceOf('claude-sonnet-5-5', t)).toBe(3)
     expect(priceOf('claude-haiku-5-5', t)).toBe(0.15)
     expect(priceOf('claude-fable-5-1', t)).toBe(null)
+  })
+
+  test('$ turns into limit % by the measured rate', async () => {
+    const ledger = { byModel: {}, byTool: {}, advisor: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, turns: [], calUsd: 2, cal5h: 10, cal7d: 1 }
+    expect(asLimitPct(0.5, ledger, '5h')).toBe(2.5)
+    expect(asLimitPct(0.5, { ...ledger, calUsd: 0 }, '5h')).toBe(null)
   })
 })
 

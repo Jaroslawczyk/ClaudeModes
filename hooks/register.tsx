@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Advice, Choice, Effort, GraphState, Ledger, Limits, Mode, ModelName, Tokens } from '../types'
-import { ADVISOR_PROMPT, classify, parseAdvice } from './classify'
+import { ADVISOR_PROMPT, ASK_HAIKU_BELOW, classify, parseAdvice } from './classify'
 
 const PANE = 'model-advisor-spend'
 
@@ -188,6 +188,19 @@ async function persist($: EngineInterface, l: Ledger): Promise<void> {
 
 const cache = new Map<string, Advice>()
 
+// Changing model mid-chat re-writes the whole context into the new model's cache, so on a long chat
+// the first turn after a switch can cost more than it saves. Warn instead of advising blindly.
+async function withSwitchCost($: EngineInterface, advice: Advice): Promise<Advice> {
+  const usage = await $.session.usage()
+  const tokens = usage.context.tokens ?? 0
+  const from = family(await $.session.model())
+  if (from === null || from === advice.model || tokens < 30_000) return advice
+  const stay = (tokens * PRICES[from][2]) / 1_000_000
+  const move = (tokens * PRICES[advice.model][3]) / 1_000_000
+  if (move - stay < 0.03) return advice
+  return { ...advice, reason: `${advice.reason} · ⚠ смена модели пересчитает кэш ${fmt(tokens)} ток. (+$${(move - stay).toFixed(2)} на 1-м ходе)` }
+}
+
 async function askHaiku($: EngineInterface, text: string): Promise<void> {
   const r = await $.model.complete({
     model: 'haiku',
@@ -199,8 +212,9 @@ async function askHaiku($: EngineInterface, text: string): Promise<void> {
   await update($, ledgerAtom, l => ({ ...l, advisor: add(l.advisor, r.usage) }))
   const advice = r.isAnswered ? parseAdvice(r.text) : null
   if (advice === null) return
-  cache.set(text, advice)
-  await update($, adviceAtom, () => advice)
+  const checked = await withSwitchCost($, advice)
+  cache.set(text, checked)
+  await update($, adviceAtom, () => checked)
 }
 
 let judged = ''
@@ -225,8 +239,11 @@ async function checkPrompt($: EngineInterface): Promise<void> {
   }
   judged = text
   const cached = cache.get(text)
-  await update($, adviceAtom, () => cached ?? classify(text))
-  if (cached === undefined && text.length >= 15) {
+  const heuristic = classify(text)
+  const advice = cached ?? (await withSwitchCost($, heuristic))
+  await update($, adviceAtom, () => advice)
+  // Haiku only settles what the keywords could not: a sure verdict costs no tokens and stays the same each time.
+  if (cached === undefined && text.length >= 15 && heuristic.confidence < ASK_HAIKU_BELOW) {
     await askHaiku($, text)
   }
 }

@@ -38,6 +38,30 @@ describe('classify', () => {
   })
 })
 
+describe('intent comes from verbs, not nouns', () => {
+  test('a question that names a function stays a question', async () => {
+    const a = classify('what does this function do')
+    expect(a.model).toBe('haiku')
+    expect(a.mode).toBe('default')
+  })
+
+  test('asking why something fails is not Haiku work', async () => {
+    expect(classify('почему тест падает?').model).toBe('sonnet')
+  })
+
+  test('understand-then-change needs Sonnet', async () => {
+    expect(classify('перепроверь как он определяет модель по промпту и переделай логику выбора').model).toBe('sonnet')
+  })
+
+  test('a retry after a miss is not sent to Haiku again', async () => {
+    expect(classify('исправь опечатку, опять не работает').model).toBe('sonnet')
+  })
+
+  test('discussion and writing stay cheap', async () => {
+    expect(classify('сравни postgres и mysql для моего случая').model).toBe('haiku')
+  })
+})
+
 describe('first message', () => {
   test('a greeting wrapped in engine context goes to Haiku', async () => {
     const raw = 'привет\n<system-reminder>\n' + 'add fix test refactor '.repeat(200) + '\n</system-reminder>'

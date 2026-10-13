@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Advice, Choice, Effort, GraphState, Lang, Ledger, Limits, Mode, ModelName, Tokens } from '../types'
+import type { Active, Advice, Choice, Effort, GraphState, Lang, Ledger, Limits, Mode, ModelName, Tokens } from '../types'
 import { ADVISOR_PROMPT, ASK_HAIKU_BELOW, classify, parseAdvice } from './classify'
 import { getLang, setLang, tr } from './i18n'
 
@@ -34,6 +34,7 @@ const ledgerAtom = atom({ plugin: 'model-advisor', key: 'ledger' } as const, EMP
 const langAtom = atom({ plugin: 'model-advisor', key: 'lang' } as const, 'ru' as Lang)
 const limitsAtom = atom({ plugin: 'model-advisor', key: 'limits' } as const, { usd: null, context: null, windows: [] })
 const graphAtom = atom({ plugin: 'model-advisor', key: 'graph' } as const, { status: 'idle', message: '' } as GraphState)
+const activeAtom = atom({ plugin: 'model-advisor', key: 'active' } as const, null)
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
 
@@ -254,11 +255,15 @@ async function withSwitchCost($: EngineInterface, advice: Advice): Promise<Advic
   return { ...advice, reason: `${advice.reason} · ⚠ ${tr(`смена модели пересчитает кэш ${fmt(tokens)} ток. (+$${(move - stay).toFixed(2)} на 1-м ходе)`, `switching re-writes the ${fmt(tokens)} token cache (+$${(move - stay).toFixed(2)} on the 1st turn)`)}` }
 }
 
-async function askHaiku($: EngineInterface, text: string): Promise<void> {
+// The last few prompts typed in this chat, compressed to one line each: context for a re-check.
+let recent: string[] = []
+
+async function askHaiku($: EngineInterface, text: string, withContext: boolean): Promise<void> {
+  const ctx = withContext && recent.length > 0 ? `Chat so far (compressed, context only):\n${recent.map((p, i) => `${i + 1}. ${p}`).join('\n')}\n\nPrompt to classify:\n` : ''
   const r = await $.model.complete({
     model: 'haiku',
     effort: 'low',
-    prompt: ADVISOR_PROMPT + text.slice(0, 4000),
+    prompt: ADVISOR_PROMPT + ctx + text.slice(0, 4000),
     maxTokens: 120,
     timeoutMs: 8000,
   })
@@ -283,21 +288,21 @@ export function userText(raw: string): string {
 // The draft as last typed; read when the person presses «Проверить промпт».
 let draft = ''
 
-// On demand only: a free heuristic verdict at once, then Haiku's (a few hundred tokens) for longer prompts.
-async function checkPrompt($: EngineInterface): Promise<void> {
+// On demand only. «Проверить» judges the draft: a free heuristic verdict at once, then Haiku only where the keywords are unsure.
+// «Перепроверить» (force) always asks Haiku again, with the chat's recent prompts as context, and skips the cache.
+async function checkPrompt($: EngineInterface, force = false): Promise<void> {
   const text = draft.trim()
   if (text.length < 2 || text.startsWith('/')) {
     $.ui.toast(tr('Сначала напишите промпт — потом нажмите «Проверить»', 'Type a prompt first, then press Check'))
     return
   }
   judged = text
-  const cached = cache.get(text)
+  const cached = force ? undefined : cache.get(text)
   const heuristic = classify(text)
   const advice = cached ?? (await withSwitchCost($, heuristic))
   await update($, adviceAtom, () => advice)
-  // Haiku only settles what the keywords could not: a sure verdict costs no tokens and stays the same each time.
-  if (cached === undefined && text.length >= 15 && heuristic.confidence < ASK_HAIKU_BELOW) {
-    await askHaiku($, text)
+  if (cached === undefined && text.length >= 15 && (force || heuristic.confidence < ASK_HAIKU_BELOW)) {
+    await askHaiku($, text, force)
   }
 }
 
@@ -308,10 +313,14 @@ async function switchLang($: EngineInterface): Promise<void> {
   await $.store.set('lang', next)
 }
 
+// «Применить» keeps the choice on every turn until «Сбросить». The mod can set model and effort only:
+// the mode (plan, accept edits) and fast mode live in the app's own switchers, so those are only suggested.
 async function apply($: EngineInterface, choice: Choice): Promise<void> {
-  await update($, choiceAtom, () => choice)
-  const tips = [tr(`Модель ${short(choice.model)} · ${choice.effort} применены к следующему ходу`, `Model ${short(choice.model)} · ${choice.effort} applied to the next turn`)]
-  if (choice.mode !== 'default') tips.push(tr(`режим ${MODE_HINT[choice.mode]}: Shift+Tab`, `mode ${MODE_HINT[choice.mode]}: Shift+Tab`))
+  const pinned = { ...choice, isPersistent: true }
+  await update($, choiceAtom, () => pinned)
+  await update($, activeAtom, () => ({ model: MODEL_IDS[choice.model], effort: choice.model === 'haiku' ? null : choice.effort }))
+  const tips = [tr(`Применено ко всем ходам: ${short(choice.model)} · ${choice.effort}`, `Applied to every turn: ${short(choice.model)} · ${choice.effort}`)]
+  if (choice.mode !== 'default') tips.push(tr(`режим ${MODE_HINT[choice.mode]} переключите сами (Shift+Tab)`, `set mode ${MODE_HINT[choice.mode]} yourself (Shift+Tab)`))
   if (choice.fast) tips.push(tr('быстрый режим: /fast', 'fast mode: /fast'))
   $.ui.toast(tips.join(' · '), { timeoutMs: 6000 })
 }
@@ -344,6 +353,10 @@ export const register: Register = on => {
     await $.command.register({ name: 'advisor', description: tr('Показать/скрыть подсказку модели над вводом', 'Show or hide the model advice above the prompt') })
     await $.command.register({ name: 'lang', description: 'Interface language: Русский / English' })
     await refreshLimits($)
+    if ((await read($, activeAtom)) === null) {
+      const model = await $.session.model()
+      await update($, activeAtom, () => ({ model, effort: null }))
+    }
     // A new chat starts from what earlier chats measured: calibration and lifetime savings.
     const kept = (await $.store.get('lifetime')) as Lifetime | null | undefined
     if (kept) await update($, ledgerAtom, l => ({ ...l, ...kept.cal, life: kept.life }))
@@ -411,12 +424,12 @@ export const register: Register = on => {
         w5: windowPct(before, 'five_hour'),
         w7: windowPct(before, 'seven_day'),
       }
-      // First message of the chat: nothing could be shown before it, so pick for it once.
+      if (!typed.startsWith('/')) recent = [...recent, typed.slice(0, 160)].slice(-3)
+      // First message of a new chat: only a recommendation, the model stays what the person set.
       if ((await $.session.turns()) === 0 && (await read($, choiceAtom)) === null && !typed.startsWith('/')) {
         const a = classify(typed)
-        await update($, choiceAtom, () => ({ model: a.model, effort: a.effort, mode: a.mode, fast: a.fast, isPersistent: false }))
-        const tips = [tr(`Автовыбор для 1-го сообщения: ${short(a.model)} · ${a.effort} — ${a.reason}`, `Auto-pick for the 1st message: ${short(a.model)} · ${a.effort} — ${a.reason}`)]
-        if (a.mode !== 'default') tips.push(tr(`советую режим ${MODE_HINT[a.mode]} (Shift+Tab)`, `suggested mode ${MODE_HINT[a.mode]} (Shift+Tab)`))
+        const tips = [tr(`Рекомендация для 1-го сообщения: ${short(a.model)} · ${a.effort} — ${a.reason} (не применено)`, `Advice for the 1st message: ${short(a.model)} · ${a.effort} — ${a.reason} (not applied)`)]
+        if (a.mode !== 'default') tips.push(tr(`режим ${MODE_HINT[a.mode]} (Shift+Tab)`, `mode ${MODE_HINT[a.mode]} (Shift+Tab)`))
         $.ui.toast(tips.join(' · '), { timeoutMs: 7000 })
       }
     }
@@ -457,6 +470,9 @@ export const register: Register = on => {
         }))
         await persist($, await read($, ledgerAtom))
       }
+    }
+    if (e.agentId === undefined) {
+      await update($, activeAtom, () => ({ model: usage.model, effort: event.effort === undefined ? null : String(event.effort) }))
     }
     if (e.agentId === undefined && result.toolUses.some(t => EDIT_TOOLS.has(t.name))) edited = true
     const names = e.agentId === undefined ? result.toolUses.map(t => t.name) : [tr('Agent (субагент)', 'Agent (subagent)')]
@@ -563,8 +579,25 @@ export const register: Register = on => {
       </Box>
     )
 
+    const active = await read($, activeAtom)
+    const activeFamily = active === null ? null : family(active.model)
+    const activeEffort = active?.effort ? (EFFORT_RU[active.effort as Effort] ?? active.effort) : tr('по умолчанию', 'default')
+    const modeNow = choice !== null ? MODE_HINT[choice.mode] : tr('как в переключателе', 'as in the switcher')
+
     return (
       <Box flexDirection="column">
+        <Box gap={2} paddingX={1}>
+          <Text dimColor>{tr('Сейчас работает', 'Running now')}:</Text>
+          {active === null ? (
+            <Text dimColor>{tr('неизвестно — отправьте сообщение', 'unknown — send a message')}</Text>
+          ) : (
+            <Box gap={2}>
+              <Text bold color={activeFamily ? MODEL_COLOR[activeFamily] : undefined}>{short(active.model)}</Text>
+              <Text>{tr('сила', 'effort')} {activeEffort}</Text>
+              <Text>{tr('режим', 'mode')} {modeNow}</Text>
+            </Box>
+          )}
+        </Box>
         {advice === null && !e.props.isWorking && (
           <Box gap={2}>
             <Button key="check" label={tr('🔍 Проверить промпт', '🔍 Check prompt')} onPress={() => checkPrompt($)} />
@@ -597,9 +630,9 @@ export const register: Register = on => {
               <Button
                 key="apply"
                 label={tr('Применить', 'Apply')}
-                onPress={() => apply($, { model: advice.model, effort: advice.effort, mode: advice.mode, fast: advice.fast, isPersistent: false })}
+                onPress={() => apply($, { model: advice.model, effort: advice.effort, mode: advice.mode, fast: advice.fast, isPersistent: true })}
               />
-              <Button key="recheck" label={tr('↻ Перепроверить', '↻ Re-check')} plain onPress={() => checkPrompt($)} />
+              <Button key="recheck" label={tr('↻ Перепроверить', '↻ Re-check')} plain onPress={() => checkPrompt($, true)} />
               <Button key="own" label={isEditing ? tr('Готово', 'Done') : tr('Своё…', 'Custom…')} plain onPress={() => update($, editingAtom, v => !v)} />
             </Box>
           </Box>

@@ -61,6 +61,8 @@ export type Limits = {
 
 export type Lang = 'ru' | 'en'
 export type GraphState = { status: 'idle' | 'running' | 'done' | 'failed'; message: string }
+// What the last main-thread request actually ran on; effort null when the model takes none (Haiku) or it is the default.
+export type Active = { model: string; effort: string | null }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -73,6 +75,7 @@ declare module 'claude-code' {
       limits: Limits
       graph: GraphState
       lang: Lang
+      active: Active | null
     }
   }
 }

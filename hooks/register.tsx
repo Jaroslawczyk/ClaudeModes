@@ -35,6 +35,13 @@ const langAtom = atom({ plugin: 'model-advisor', key: 'lang' } as const, 'ru' as
 const limitsAtom = atom({ plugin: 'model-advisor', key: 'limits' } as const, { usd: null, context: null, windows: [] })
 const graphAtom = atom({ plugin: 'model-advisor', key: 'graph' } as const, { status: 'idle', message: '' } as GraphState)
 const activeAtom = atom({ plugin: 'model-advisor', key: 'active' } as const, null)
+const footerModesAtom = atom({ plugin: 'model-advisor', key: 'footerModes' } as const, [] as string[])
+const sessionModelAtom = atom({ plugin: 'model-advisor', key: 'sessionModel' } as const, null)
+
+// The app's own mode, read from the footer labels (e.g. «Plan», «Accept edits»); no label means the default mode.
+export function modeOf(labels: readonly string[]): string | null {
+  return labels.find(l => /plan|accept|auto|bypass|dont|don't/i.test(l)) ?? null
+}
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
 
@@ -353,16 +360,16 @@ export const register: Register = on => {
     await $.command.register({ name: 'advisor', description: tr('Показать/скрыть подсказку модели над вводом', 'Show or hide the model advice above the prompt') })
     await $.command.register({ name: 'lang', description: 'Interface language: Русский / English' })
     await refreshLimits($)
-    if ((await read($, activeAtom)) === null) {
-      const model = await $.session.model()
-      await update($, activeAtom, () => ({ model, effort: null }))
-    }
+    const model = await $.session.model()
+    await update($, sessionModelAtom, () => model)
+    if ((await read($, activeAtom)) === null) await update($, activeAtom, () => ({ model, effort: null }))
     // A new chat starts from what earlier chats measured: calibration and lifetime savings.
     const kept = (await $.store.get('lifetime')) as Lifetime | null | undefined
     if (kept) await update($, ledgerAtom, l => ({ ...l, ...kept.cal, life: kept.life }))
     // Limits move with other chats and devices too: re-read them while idle, not only after a turn.
     $.clock.every(30_000, () => {
       void refreshLimits($)
+      void $.session.model().then(model => update($, sessionModelAtom, () => model))
     })
 
     return next(e)
@@ -579,25 +586,32 @@ export const register: Register = on => {
       </Box>
     )
 
-    const active = await read($, activeAtom)
-    const activeFamily = active === null ? null : family(active.model)
-    const activeEffort = active?.effort ? (EFFORT_RU[active.effort as Effort] ?? active.effort) : tr('по умолчанию', 'default')
-    const modeNow = choice !== null ? MODE_HINT[choice.mode] : tr('как в переключателе', 'as in the switcher')
+    // Row 1: what the app itself runs (footer). Row 2: what the mod applies to every request, when applied.
+    const sessionModel = await read($, sessionModelAtom)
+    const footerMode = modeOf(await read($, footerModesAtom)) ?? tr('обычный', 'default')
+    const overriding = choice !== null && choice.isPersistent
+    const modelColor = (m: string | null) => {
+      const f = m === null ? null : family(m)
+      return f ? MODEL_COLOR[f] : undefined
+    }
 
     return (
       <Box flexDirection="column">
         <Box gap={2} paddingX={1}>
-          <Text dimColor>{tr('Сейчас работает', 'Running now')}:</Text>
-          {active === null ? (
-            <Text dimColor>{tr('неизвестно — отправьте сообщение', 'unknown — send a message')}</Text>
-          ) : (
-            <Box gap={2}>
-              <Text bold color={activeFamily ? MODEL_COLOR[activeFamily] : undefined}>{short(active.model)}</Text>
-              <Text>{tr('сила', 'effort')} {activeEffort}</Text>
-              <Text>{tr('режим', 'mode')} {modeNow}</Text>
-            </Box>
-          )}
+          <Text dimColor>{tr('Внизу', 'Footer')}:</Text>
+          <Text bold color={modelColor(sessionModel)}>{sessionModel === null ? '—' : short(sessionModel)}</Text>
+          <Text>{tr('режим', 'mode')} {footerMode}</Text>
         </Box>
+        {overriding && (
+          <Box gap={2} paddingX={1}>
+            <Text dimColor>{tr('Мод применяет', 'Mod applies')}:</Text>
+            <Text bold color={MODEL_COLOR[choice.model]}>{short(MODEL_IDS[choice.model])}</Text>
+            <Text>
+              {tr('сила', 'effort')} {choice.model === 'haiku' ? tr('не применяется (Haiku)', 'not applied (Haiku)') : EFFORT_RU[choice.effort]}
+            </Text>
+            <Text dimColor>{tr('на все ходы, пока не «Сбросить»', 'every turn until «Reset»')}</Text>
+          </Box>
+        )}
         {advice === null && !e.props.isWorking && (
           <Box gap={2}>
             <Button key="check" label={tr('🔍 Проверить промпт', '🔍 Check prompt')} onPress={() => checkPrompt($)} />
@@ -738,6 +752,12 @@ export const register: Register = on => {
         )}
       </Box>
     )
+  })
+
+  // The footer's labels show the app's real mode; the mod reads them and does not draw over the footer.
+  on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
+    await update($, footerModesAtom, () => [...e.props.modes])
+    return next(e)
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { classify, parseAdvice } from './classify'
-import { asLimitPct, priceOf,short, total, userText } from './register'
+import { asLimitPct, modeOf, priceOf, short, total, userText } from './register'
 
 describe('classify', () => {
   test('simple question goes to Haiku, low effort', async () => {
@@ -79,6 +79,14 @@ describe('cheapest that copes', () => {
 
   test('a multi-step task stays on Sonnet, not Opus', async () => {
     expect(classify('реализуй экспорт отчётов в CSV для admin.ts, report.ts, api.ts').model).toBe('sonnet')
+  })
+})
+
+describe('footer mode', () => {
+  test('reads Plan from the footer labels, and nothing when the mode is default', async () => {
+    expect(modeOf(['Plan', 'Opus'])).toBe('Plan')
+    expect(modeOf(['Accept edits'])).toBe('Accept edits')
+    expect(modeOf([])).toBe(null)
   })
 })
 

@@ -76,6 +76,9 @@ declare module 'claude-code' {
       graph: GraphState
       lang: Lang
       active: Active | null
+      // The labels the app's footer shows (SessionMode), and the session's own model, read from the app.
+      footerModes: string[]
+      sessionModel: string | null
     }
   }
 }

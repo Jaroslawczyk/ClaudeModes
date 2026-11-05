@@ -743,8 +743,9 @@ export const register: Register = on => {
         )}
         {(limits.windows.length > 0 || limits.context !== null || limits.usd !== null) && (
           <Box flexDirection="column" borderStyle="round" borderColor="#555555" paddingX={1}>
-            <Box gap={2} flexWrap="wrap">
+            <Box gap={2}>
               {label(tr('Этот чат', 'This chat'))}
+              <Box flexWrap="wrap" columnGap={2} flexGrow={1} flexShrink={1}>
               {limits.context !== null && (
                 <Text>
                   <Text dimColor>{tr('контекст ', 'context ')}</Text>
@@ -762,9 +763,11 @@ export const register: Register = on => {
                   <Text bold>${limits.usd.toFixed(2)}</Text>
                 </Text>
               )}
+                          </Box>
             </Box>
-            <Box gap={2} flexWrap="wrap">
+            <Box gap={2}>
               {label(tr('Время', 'Time'))}
+              <Box flexWrap="wrap" columnGap={2} flexGrow={1} flexShrink={1}>
               <Text>
                 <Text dimColor>{tr('⏱ ', '⏱ ')}</Text>
                 {timer.startedAt !== null ? (
@@ -780,9 +783,11 @@ export const register: Register = on => {
               <Button key="times" label={tr('История', 'History')} plain onPress={() => $.ui.open({ id: TIMES_PANE, title: tr('Время ответа', 'Answer time') })} />
               <Text dimColor>{'/spend'}</Text>
               <Button key="lang" label={tr('EN', 'RU')} plain onPress={() => switchLang($)} />
+                          </Box>
             </Box>
-            <Box gap={2} flexWrap="wrap">
+            <Box gap={2}>
               {label(tr('Экономия', 'Savings'))}
+              <Box flexWrap="wrap" columnGap={2} flexGrow={1} flexShrink={1}>
               <Text>
                 <Text color="#5fb878">{tr('💰 сэкономлено ', '💰 saved ')}</Text>
                 <Text bold color="#5fb878">{amount(ledger.saved ?? 0)}</Text>
@@ -794,10 +799,12 @@ export const register: Register = on => {
               <Text dimColor>
                 {tr('за всё время', 'all time')}: +{amount(life.saved)} / −{amount(life.missed)}
               </Text>
+                          </Box>
             </Box>
             {limits.windows.length > 0 && (
-              <Box gap={2} flexWrap="wrap">
+              <Box gap={2}>
                 {label(tr('Лимиты', 'Limits'))}
+                <Box flexWrap="wrap" columnGap={2} flexGrow={1} flexShrink={1}>
                 {limits.windows.map(w => (
                   <Text>
                     <Text dimColor>{w.kind === 'five_hour' ? tr('5 часов ', '5 hours ') : w.kind === 'seven_day' ? tr('неделя ', 'week ') : `${w.kind} `}</Text>
@@ -806,10 +813,12 @@ export const register: Register = on => {
                     {resetIn(w.resetsAt) !== null && <Text dimColor> · {tr('сброс', 'reset')} {resetIn(w.resetsAt)}</Text>}
                   </Text>
                 ))}
+                              </Box>
               </Box>
             )}
-            <Box gap={2} flexWrap="wrap">
+            <Box gap={2}>
               {label(tr('Граф', 'Graph'))}
+              <Box flexWrap="wrap" columnGap={2} flexGrow={1} flexShrink={1}>
               <Button
                 key="graphify-build"
                 label={graph.status === 'running' ? tr('Строю граф…', 'Building graph…') : tr('Построить / обновить граф', 'Build / update graph')}
@@ -822,6 +831,7 @@ export const register: Register = on => {
                   ? tr('без LLM и токенов', 'no LLM, no tokens')
                   : `${GRAPH_RU[graph.status]}${graph.message ? ` — ${graph.message}` : ''}`}
               </Text>
+                          </Box>
             </Box>
           </Box>
         )}

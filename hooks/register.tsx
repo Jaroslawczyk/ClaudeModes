@@ -770,12 +770,11 @@ export const register: Register = on => {
                   <Text bold>${limits.usd.toFixed(2)}</Text>
                   {limits.windows.length > 0 && (
                     <Text dimColor> ≈ {asLimitPct(limits.usd, ledger, '5h') === null ? tr('?% лимита 5ч (идёт замер)', '?% of 5h limit (measuring)') : `${pctText(asLimitPct(limits.usd, ledger, '5h') ?? 0)} ${tr('лимита 5ч', 'of 5h limit')}`}</Text>
-                  )} {tr('лимита 5ч', 'of 5h limit')}</Text>
                   )}
                 </Text>
               )}
-                          </Box>
             </Box>
+          </Box>
             <Box gap={2}>
               {label(tr('Время', 'Time'))}
               <Box flexWrap="wrap" columnGap={2} flexGrow={1} flexShrink={1}>

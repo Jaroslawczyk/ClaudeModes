@@ -655,14 +655,14 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column">
-        <Box gap={2} paddingX={1} flexWrap="wrap">
+        <Box columnGap={2} paddingX={1} flexWrap="wrap">
           <Text dimColor>{tr('Внизу', 'Footer')}:</Text>
           <Text bold color={modelColor(sessionModel)}>{sessionModel === null ? '—' : short(sessionModel)}</Text>
           <Text>{tr('режим', 'mode')} {footerMode}</Text>
           <Button key="hide" label={tr('▾ Скрыть мод', '▾ Hide mod')} plain onPress={() => update($, hiddenAtom, () => true)} />
         </Box>
         {overriding && (
-          <Box gap={2} paddingX={1} flexWrap="wrap">
+          <Box columnGap={2} paddingX={1} flexWrap="wrap">
             <Text dimColor>{tr('Мод применяет', 'Mod applies')}:</Text>
             <Text bold color={MODEL_COLOR[choice.model]}>{short(MODEL_IDS[choice.model])}</Text>
             <Text>
@@ -672,7 +672,7 @@ export const register: Register = on => {
           </Box>
         )}
         {advice === null && !e.props.isWorking && (
-          <Box gap={2} flexWrap="wrap">
+          <Box columnGap={2} flexWrap="wrap">
             <Button key="check" label={tr('🔍 Проверить промпт', '🔍 Check prompt')} onPress={() => checkPrompt($)} />
             <Text dimColor>{tr('подберу самую дешёвую модель, которая справится', 'picks the cheapest model that can handle it')}</Text>
           </Box>
@@ -733,7 +733,7 @@ export const register: Register = on => {
           </Box>
         )}
         {choice !== null && (
-          <Box gap={2} paddingX={1} flexWrap="wrap">
+          <Box columnGap={2} paddingX={1} flexWrap="wrap">
             <Text color="success">
               ✔ {tr('Выбрано', 'Chosen')}: {short(choice.model)} · {choice.effort} {choice.isPersistent ? tr('(закреплено)', '(pinned)') : tr('(на 1 ход)', '(1 turn)')}
             </Text>

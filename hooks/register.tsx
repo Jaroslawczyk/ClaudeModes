@@ -596,10 +596,18 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey || (await read($, hiddenAtom))) return next(e)
+    if (e.props.hasSurvey) return next(e)
 
     setLang(await read($, langAtom))
     const { Box, Button, Text } = $.ui.resolve(e)
+    // Collapsed: one small button brings the whole band back.
+    if (await read($, hiddenAtom)) {
+      return (
+        <Box paddingX={1}>
+          <Button key="show" label={tr('▸ Показать мод', '▸ Show mod')} plain onPress={() => update($, hiddenAtom, () => false)} />
+        </Box>
+      )
+    }
     const advice = await read($, adviceAtom)
     const choice = await read($, choiceAtom)
     const isEditing = await read($, editingAtom)
@@ -645,6 +653,7 @@ export const register: Register = on => {
           <Text dimColor>{tr('Внизу', 'Footer')}:</Text>
           <Text bold color={modelColor(sessionModel)}>{sessionModel === null ? '—' : short(sessionModel)}</Text>
           <Text>{tr('режим', 'mode')} {footerMode}</Text>
+          <Button key="hide" label={tr('▾ Скрыть мод', '▾ Hide mod')} plain onPress={() => update($, hiddenAtom, () => true)} />
         </Box>
         {overriding && (
           <Box gap={2} paddingX={1}>

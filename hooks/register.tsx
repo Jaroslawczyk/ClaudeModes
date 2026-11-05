@@ -354,6 +354,7 @@ export const register: Register = on => {
   let choiceUsed = false
   // Started on a typed prompt, stopped when the AI is done; the next prompt starts from zero.
   let timing = false
+  let tick: { cancel: () => void } | null = null
   let timedPrompt = ''
   let adviceAtSubmit: Advice | null = null
   let turn: {
@@ -384,10 +385,6 @@ export const register: Register = on => {
     const kept = (await $.store.get('lifetime')) as Lifetime | null | undefined
     if (kept) await update($, ledgerAtom, l => ({ ...l, ...kept.cal, life: kept.life }))
     // Limits move with other chats and devices too: re-read them while idle, not only after a turn.
-    // Live timer: redraw once a second, only while a prompt is being answered.
-    $.clock.every(1000, () => {
-      if (timing) void update($, nowAtom, () => Date.now())
-    })
     await $.command.register({ name: 'timers', description: tr('История времени ответа по каждому промпту', 'Answer time per prompt in this chat') })
     $.clock.every(30_000, () => {
       void refreshLimits($)
@@ -453,6 +450,11 @@ export const register: Register = on => {
         timedPrompt = typed.slice(0, 120)
         await update($, timerAtom, () => ({ startedAt: t0, lastMs: null }))
         await update($, nowAtom, () => t0)
+        // Started here, not in session.start: it works however the mod was loaded.
+        tick?.cancel()
+        tick = $.clock.every(1000, () => {
+          void update($, nowAtom, () => Date.now())
+        })
       }
       const usd = (await $.session.usage()).cost?.usd ?? 0
       const before = (await read($, limitsAtom)).windows
@@ -541,6 +543,8 @@ export const register: Register = on => {
 
     if (timing) {
       timing = false
+      tick?.cancel()
+      tick = null
       const t = await read($, timerAtom)
       const ms = t.startedAt === null ? 0 : Math.max(0, Date.now() - t.startedAt)
       await update($, timerAtom, () => ({ startedAt: null, lastMs: ms }))

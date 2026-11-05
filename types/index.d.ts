@@ -59,6 +59,10 @@ export type Limits = {
   windows: { kind: string; percentUsed: number; resetsAt?: string }[]
 }
 
+// Real wall-clock timer of the current prompt (startedAt null while idle) and the per-prompt history of this chat.
+export type TimerState = { startedAt: number | null; lastMs: number | null }
+export type TimeRecord = { prompt: string; ms: number }
+
 export type Lang = 'ru' | 'en'
 export type GraphState = { status: 'idle' | 'running' | 'done' | 'failed'; message: string }
 // What the last main-thread request actually ran on; effort null when the model takes none (Haiku) or it is the default.
@@ -79,6 +83,9 @@ declare module 'claude-code' {
       // The labels the app's footer shows (SessionMode), and the session's own model, read from the app.
       footerModes: string[]
       sessionModel: string | null
+      timer: TimerState
+      now: number
+      times: TimeRecord[]
     }
   }
 }

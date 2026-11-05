@@ -1,11 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Active, Advice, Choice, Effort, GraphState, Lang, Ledger, Limits, Mode, ModelName, Tokens } from '../types'
+import type { Active, Advice, Choice, Effort, GraphState, Lang, Ledger, Limits, Mode, ModelName, TimeRecord, TimerState, Tokens } from '../types'
 import { ADVISOR_PROMPT, ASK_HAIKU_BELOW, classify, parseAdvice } from './classify'
 import { getLang, setLang, tr } from './i18n'
 
 const PANE = 'model-advisor-spend'
+const TIMES_PANE = 'model-advisor-times'
 
 export const MODEL_IDS: Record<ModelName, string> = {
   haiku: 'claude-haiku-5-5',
@@ -37,6 +38,19 @@ const graphAtom = atom({ plugin: 'model-advisor', key: 'graph' } as const, { sta
 const activeAtom = atom({ plugin: 'model-advisor', key: 'active' } as const, null)
 const footerModesAtom = atom({ plugin: 'model-advisor', key: 'footerModes' } as const, [] as string[])
 const sessionModelAtom = atom({ plugin: 'model-advisor', key: 'sessionModel' } as const, null)
+const timerAtom = atom({ plugin: 'model-advisor', key: 'timer' } as const, { startedAt: null, lastMs: null } as TimerState)
+const nowAtom = atom({ plugin: 'model-advisor', key: 'now' } as const, 0)
+const timesAtom = atom({ plugin: 'model-advisor', key: 'times' } as const, [] as TimeRecord[])
+
+// 12.3с / 1м 05с / 1ч 02м 05с
+export function fmtDur(ms: number): string {
+  const [h, m, s] = [tr('ч', 'h'), tr('м', 'm'), tr('с', 's')]
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}${s}`
+  const t = Math.floor(ms / 1000)
+  const [hh, mm, ss] = [Math.floor(t / 3600), Math.floor((t % 3600) / 60), t % 60]
+  const p = (n: number) => String(n).padStart(2, '0')
+  return hh > 0 ? `${hh}${h} ${p(mm)}${m} ${p(ss)}${s}` : `${mm}${m} ${p(ss)}${s}`
+}
 
 // The app's own mode, read from the footer labels (e.g. «Plan», «Accept edits»); no label means the default mode.
 export function modeOf(labels: readonly string[]): string | null {
@@ -338,6 +352,9 @@ export const register: Register = on => {
   // Set when this turn changed files; the graph is refreshed once, at the turn's end.
   let edited = false
   let choiceUsed = false
+  // Started on a typed prompt, stopped when the AI is done; the next prompt starts from zero.
+  let timing = false
+  let timedPrompt = ''
   let adviceAtSubmit: Advice | null = null
   let turn: {
     prompt: string
@@ -367,6 +384,11 @@ export const register: Register = on => {
     const kept = (await $.store.get('lifetime')) as Lifetime | null | undefined
     if (kept) await update($, ledgerAtom, l => ({ ...l, ...kept.cal, life: kept.life }))
     // Limits move with other chats and devices too: re-read them while idle, not only after a turn.
+    // Live timer: redraw once a second, only while a prompt is being answered.
+    $.clock.every(1000, () => {
+      if (timing) void update($, nowAtom, () => Date.now())
+    })
+    await $.command.register({ name: 'timers', description: tr('История времени ответа по каждому промпту', 'Answer time per prompt in this chat') })
     $.clock.every(30_000, () => {
       void refreshLimits($)
       void $.session.model().then(model => update($, sessionModelAtom, () => model))
@@ -380,6 +402,12 @@ export const register: Register = on => {
     await $.ui.open({ id: PANE, title: tr('Расход сессии', 'Session spending') })
 
     return { text: tr('Панель расхода открыта.', 'Spending pane opened.') }
+  })
+
+  on('command.run', { command: 'timers' }, async $ => {
+    await $.ui.open({ id: TIMES_PANE, title: tr('Время ответа', 'Answer time') })
+
+    return { text: tr('История времени открыта.', 'Time history opened.') }
   })
 
   on('command.run', { command: 'advisor' }, async $ => {
@@ -419,6 +447,13 @@ export const register: Register = on => {
     if (e.turnId === undefined) {
       // e.text carries what the engine adds around the prompt; judge what the person typed.
       const typed = userText(e.text)
+      if (!typed.startsWith('/')) {
+        const t0 = Date.now()
+        timing = true
+        timedPrompt = typed.slice(0, 120)
+        await update($, timerAtom, () => ({ startedAt: t0, lastMs: null }))
+        await update($, nowAtom, () => t0)
+      }
       const usd = (await $.session.usage()).cost?.usd ?? 0
       const before = (await read($, limitsAtom)).windows
       turn = {
@@ -504,6 +539,13 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     if (e.agentId !== undefined) return next(e)
 
+    if (timing) {
+      timing = false
+      const t = await read($, timerAtom)
+      const ms = t.startedAt === null ? 0 : Math.max(0, Date.now() - t.startedAt)
+      await update($, timerAtom, () => ({ startedAt: null, lastMs: ms }))
+      await update($, timesAtom, l => [...l, { prompt: timedPrompt, ms }].slice(-200))
+    }
     await refreshLimits($)
     const limits = await read($, limitsAtom)
     if (turn !== null) {
@@ -580,6 +622,8 @@ export const register: Register = on => {
 
     const life = ledger.life ?? { saved: 0, missed: 0 }
     const graph = await read($, graphAtom)
+    const timer = await read($, timerAtom)
+    const now = await read($, nowAtom)
     const label = (text: string) => (
       <Box width={11}>
         <Text bold color={PINK}>{text}</Text>
@@ -703,6 +747,15 @@ export const register: Register = on => {
                   <Text bold>${limits.usd.toFixed(2)}</Text>
                 </Text>
               )}
+              <Text>
+                <Text dimColor>{tr('⏱ ', '⏱ ')}</Text>
+                {timer.startedAt !== null ? (
+                  <Text bold color="#d0a050">{fmtDur(Math.max(0, (now || timer.startedAt) - timer.startedAt))}</Text>
+                ) : (
+                  <Text bold>{timer.lastMs === null ? '0.0' + tr('с', 's') : fmtDur(timer.lastMs)}</Text>
+                )}
+              </Text>
+              <Button key="times" label={tr('⏱ История', '⏱ History')} plain onPress={() => $.ui.open({ id: TIMES_PANE, title: tr('Время ответа', 'Answer time') })} />
               <Text dimColor>{tr('/spend — подробности', '/spend — details')}</Text>
               <Button key="lang" label={tr('EN', 'RU')} plain onPress={() => switchLang($)} />
             </Box>
@@ -758,6 +811,40 @@ export const register: Register = on => {
   on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
     await update($, footerModesAtom, () => [...e.props.modes])
     return next(e)
+  })
+
+  on('ui.render', { component: 'Pane', requestId: TIMES_PANE }, async ($, e) => {
+    setLang(await read($, langAtom))
+    const { Box, Text } = $.ui.resolve(e)
+    const times = await read($, timesAtom)
+    const timer = await read($, timerAtom)
+    const now = await read($, nowAtom)
+    const sum = times.reduce((a, t) => a + t.ms, 0)
+    const max = Math.max(1, ...times.map(t => t.ms))
+
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Box flexDirection="column">
+          <Text bold>{tr('Время ответа ИИ по промптам', 'AI answer time per prompt')}</Text>
+          {timer.startedAt !== null && (
+            <Text color="#d0a050">▶ {tr('идёт сейчас', 'running now')}: {fmtDur(Math.max(0, (now || timer.startedAt) - timer.startedAt))}</Text>
+          )}
+          {times.length > 0 && (
+            <Text dimColor>
+              {tr('Промптов', 'Prompts')}: {times.length} · {tr('всего', 'total')} {fmtDur(sum)} · {tr('среднее', 'avg')} {fmtDur(sum / times.length)}
+            </Text>
+          )}
+        </Box>
+        <Box flexDirection="column">
+          {times.length === 0 && <Text dimColor>{tr('Пока нет завершённых промптов.', 'No finished prompts yet.')}</Text>}
+          {times.map((t, i) => (
+            <Text wrap="truncate-end">
+              {String(i + 1).padStart(3)}. <Text bold>{fmtDur(t.ms).padStart(10)}</Text> <Text color={levelColor((t.ms / max) * 100)}>{bar((t.ms / max) * 100, 8)}</Text> «{t.prompt}»
+            </Text>
+          ))}
+        </Box>
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

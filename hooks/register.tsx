@@ -761,6 +761,9 @@ export const register: Register = on => {
                 <Text>
                   <Text dimColor>{tr('стоимость ', 'cost ')}</Text>
                   <Text bold>${limits.usd.toFixed(2)}</Text>
+                  {limits.windows.length > 0 && asLimitPct(limits.usd, ledger, '5h') !== null && (
+                    <Text dimColor> ≈ {pctText(asLimitPct(limits.usd, ledger, '5h') ?? 0)} {tr('лимита 5ч', 'of 5h limit')}</Text>
+                  )}
                 </Text>
               )}
                           </Box>

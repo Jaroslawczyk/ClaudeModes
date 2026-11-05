@@ -572,6 +572,12 @@ export const register: Register = on => {
         ...l,
         turns: [...l.turns, { prompt: done.prompt, model: done.model, tokens: done.tokens, usd, tools: done.tools }].slice(-50),
       }))
+      if (!done.prompt.startsWith('/')) {
+        const led = await read($, ledgerAtom)
+        const measured = d5 !== null && d5 > 0 ? d5 : null
+        const pct5h = asLimitPct(usd, led, '5h') ?? measured
+        await update($, timesAtom, l => (l.length === 0 ? l : [...l.slice(0, -1), { ...l[l.length - 1], tokens: total(done.tokens), usd, pct5h }]))
+      }
       turn = null
     }
     const choice = await read($, choiceAtom)
@@ -880,9 +886,13 @@ export const register: Register = on => {
         <Box flexDirection="column">
           {times.length === 0 && <Text dimColor>{tr('Пока нет завершённых промптов.', 'No finished prompts yet.')}</Text>}
           {times.map((t, i) => (
-            <Text wrap="truncate-end">
-              {String(i + 1).padStart(3)}. <Text bold>{fmtDur(t.ms).padStart(10)}</Text> <Text color={levelColor((t.ms / max) * 100)}>{bar((t.ms / max) * 100, 8)}</Text> «{t.prompt}»
-            </Text>
+            <Box flexDirection="column">
+              <Text>
+                {String(i + 1).padStart(2)}. <Text bold>{fmtDur(t.ms)}</Text> <Text color={levelColor((t.ms / max) * 100)}>{bar((t.ms / max) * 100, 6)}</Text>
+                {t.tokens === undefined ? '' : <Text dimColor> · {fmt(t.tokens)} {tr('ток.', 'tok.')} · ${(t.usd ?? 0).toFixed(2)} · {t.pct5h == null ? '?%' : pctText(t.pct5h)} {tr('лимита 5ч', 'of 5h')}</Text>}
+              </Text>
+              <Text dimColor wrap="truncate-end">   «{t.prompt}»</Text>
+            </Box>
           ))}
         </Box>
       </Box>

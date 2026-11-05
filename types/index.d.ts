@@ -61,7 +61,8 @@ export type Limits = {
 
 // Real wall-clock timer of the current prompt (startedAt null while idle) and the per-prompt history of this chat.
 export type TimerState = { startedAt: number | null; lastMs: number | null }
-export type TimeRecord = { prompt: string; ms: number }
+// tokens/usd/pct5h: what this prompt spent (pct5h = share of the 5h limit, null while not calibrated); filled when the turn ends.
+export type TimeRecord = { prompt: string; ms: number; tokens?: number; usd?: number; pct5h?: number | null }
 
 export type Lang = 'ru' | 'en'
 export type GraphState = { status: 'idle' | 'running' | 'done' | 'failed'; message: string }

@@ -636,6 +636,8 @@ export const register: Register = on => {
     const graph = await read($, graphAtom)
     const timer = await read($, timerAtom)
     const now = await read($, nowAtom)
+    const spentMs = (await read($, timesAtom)).reduce((x, t) => x + t.ms, 0)
+    const runMs = timer.startedAt === null ? 0 : Math.max(0, (now || timer.startedAt) - timer.startedAt)
     const label = (text: string) => (
       <Box width={11}>
         <Text bold color={PINK}>{text}</Text>
@@ -768,6 +770,10 @@ export const register: Register = on => {
                   <Text bold>{timer.lastMs === null ? '0.0' + tr('с', 's') : fmtDur(timer.lastMs)}</Text>
                 )}
               </Text>
+              <Text>
+                <Text dimColor>{tr('Σ всего ', 'Σ total ')}</Text>
+                <Text bold>{fmtDur(spentMs + runMs)}</Text>
+              </Text>
               <Button key="times" label={tr('⏱ История', '⏱ History')} plain onPress={() => $.ui.open({ id: TIMES_PANE, title: tr('Время ответа', 'Answer time') })} />
               <Text dimColor>{tr('/spend — подробности', '/spend — details')}</Text>
               <Button key="lang" label={tr('EN', 'RU')} plain onPress={() => switchLang($)} />
@@ -844,7 +850,7 @@ export const register: Register = on => {
           )}
           {times.length > 0 && (
             <Text dimColor>
-              {tr('Промптов', 'Prompts')}: {times.length} · {tr('всего', 'total')} {fmtDur(sum)} · {tr('среднее', 'avg')} {fmtDur(sum / times.length)}
+              {tr('Промптов', 'Prompts')}: {times.length} · {tr('всего', 'total')} {fmtDur(sum + (timer.startedAt === null ? 0 : Math.max(0, (now || timer.startedAt) - timer.startedAt)))} · {tr('среднее', 'avg')} {fmtDur(sum / times.length)}
             </Text>
           )}
         </Box>

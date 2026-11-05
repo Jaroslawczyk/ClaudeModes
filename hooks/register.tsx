@@ -762,6 +762,9 @@ export const register: Register = on => {
                   <Text bold>${limits.usd.toFixed(2)}</Text>
                 </Text>
               )}
+            </Box>
+            <Box gap={2} flexWrap="wrap">
+              {label(tr('Время', 'Time'))}
               <Text>
                 <Text dimColor>{tr('⏱ ', '⏱ ')}</Text>
                 {timer.startedAt !== null ? (
@@ -771,11 +774,11 @@ export const register: Register = on => {
                 )}
               </Text>
               <Text>
-                <Text dimColor>{tr('Σ всего ', 'Σ total ')}</Text>
+                <Text dimColor>{'Σ '}</Text>
                 <Text bold>{fmtDur(spentMs + runMs)}</Text>
               </Text>
-              <Button key="times" label={tr('⏱ История', '⏱ History')} plain onPress={() => $.ui.open({ id: TIMES_PANE, title: tr('Время ответа', 'Answer time') })} />
-              <Text dimColor>{tr('/spend — подробности', '/spend — details')}</Text>
+              <Button key="times" label={tr('История', 'History')} plain onPress={() => $.ui.open({ id: TIMES_PANE, title: tr('Время ответа', 'Answer time') })} />
+              <Text dimColor>{'/spend'}</Text>
               <Button key="lang" label={tr('EN', 'RU')} plain onPress={() => switchLang($)} />
             </Box>
             <Box gap={3}>
@@ -795,14 +798,16 @@ export const register: Register = on => {
             {limits.windows.length > 0 && (
               <Box gap={3}>
                 {label(tr('Лимиты', 'Limits'))}
+                <Box flexDirection="column">
                 {limits.windows.map(w => (
                   <Text>
                     <Text dimColor>{w.kind === 'five_hour' ? tr('5 часов ', '5 hours ') : w.kind === 'seven_day' ? tr('неделя ', 'week ') : `${w.kind} `}</Text>
                     <Text color={levelColor(w.percentUsed)}>{bar(w.percentUsed)}</Text>
                     <Text bold> {Math.round(w.percentUsed)}%</Text>
-                    {resetIn(w.resetsAt) !== null && <Text dimColor> · {tr('сброс через', 'resets in')} {resetIn(w.resetsAt)}</Text>}
+                    {resetIn(w.resetsAt) !== null && <Text dimColor> · {tr('сброс', 'reset')} {resetIn(w.resetsAt)}</Text>}
                   </Text>
                 ))}
+                </Box>
               </Box>
             )}
             <Box gap={3}>
@@ -816,7 +821,7 @@ export const register: Register = on => {
               />
               <Text dimColor>
                 {graph.status === 'idle'
-                  ? tr('graphify update . — только разбор кода, без LLM и токенов', 'graphify update . — code parsing only, no LLM, no tokens')
+                  ? tr('без LLM и токенов', 'no LLM, no tokens')
                   : `${GRAPH_RU[graph.status]}${graph.message ? ` — ${graph.message}` : ''}`}
               </Text>
             </Box>

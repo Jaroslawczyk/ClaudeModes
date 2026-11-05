@@ -639,7 +639,7 @@ export const register: Register = on => {
     const spentMs = (await read($, timesAtom)).reduce((x, t) => x + t.ms, 0)
     const runMs = timer.startedAt === null ? 0 : Math.max(0, (now || timer.startedAt) - timer.startedAt)
     const label = (text: string) => (
-      <Box width={11}>
+      <Box width={9}>
         <Text bold color={PINK}>{text}</Text>
       </Box>
     )
@@ -655,14 +655,14 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column">
-        <Box gap={2} paddingX={1}>
+        <Box gap={2} paddingX={1} flexWrap="wrap">
           <Text dimColor>{tr('Внизу', 'Footer')}:</Text>
           <Text bold color={modelColor(sessionModel)}>{sessionModel === null ? '—' : short(sessionModel)}</Text>
           <Text>{tr('режим', 'mode')} {footerMode}</Text>
           <Button key="hide" label={tr('▾ Скрыть мод', '▾ Hide mod')} plain onPress={() => update($, hiddenAtom, () => true)} />
         </Box>
         {overriding && (
-          <Box gap={2} paddingX={1}>
+          <Box gap={2} paddingX={1} flexWrap="wrap">
             <Text dimColor>{tr('Мод применяет', 'Mod applies')}:</Text>
             <Text bold color={MODEL_COLOR[choice.model]}>{short(MODEL_IDS[choice.model])}</Text>
             <Text>
@@ -672,7 +672,7 @@ export const register: Register = on => {
           </Box>
         )}
         {advice === null && !e.props.isWorking && (
-          <Box gap={2}>
+          <Box gap={2} flexWrap="wrap">
             <Button key="check" label={tr('🔍 Проверить промпт', '🔍 Check prompt')} onPress={() => checkPrompt($)} />
             <Text dimColor>{tr('подберу самую дешёвую модель, которая справится', 'picks the cheapest model that can handle it')}</Text>
           </Box>
@@ -733,7 +733,7 @@ export const register: Register = on => {
           </Box>
         )}
         {choice !== null && (
-          <Box gap={2} paddingX={1}>
+          <Box gap={2} paddingX={1} flexWrap="wrap">
             <Text color="success">
               ✔ {tr('Выбрано', 'Chosen')}: {short(choice.model)} · {choice.effort} {choice.isPersistent ? tr('(закреплено)', '(pinned)') : tr('(на 1 ход)', '(1 turn)')}
             </Text>
@@ -743,7 +743,7 @@ export const register: Register = on => {
         )}
         {(limits.windows.length > 0 || limits.context !== null || limits.usd !== null) && (
           <Box flexDirection="column" borderStyle="round" borderColor="#555555" paddingX={1}>
-            <Box gap={3}>
+            <Box gap={2} flexWrap="wrap">
               {label(tr('Этот чат', 'This chat'))}
               {limits.context !== null && (
                 <Text>
@@ -781,7 +781,7 @@ export const register: Register = on => {
               <Text dimColor>{'/spend'}</Text>
               <Button key="lang" label={tr('EN', 'RU')} plain onPress={() => switchLang($)} />
             </Box>
-            <Box gap={3}>
+            <Box gap={2} flexWrap="wrap">
               {label(tr('Экономия', 'Savings'))}
               <Text>
                 <Text color="#5fb878">{tr('💰 сэкономлено ', '💰 saved ')}</Text>
@@ -796,9 +796,8 @@ export const register: Register = on => {
               </Text>
             </Box>
             {limits.windows.length > 0 && (
-              <Box gap={3}>
+              <Box gap={2} flexWrap="wrap">
                 {label(tr('Лимиты', 'Limits'))}
-                <Box flexDirection="column">
                 {limits.windows.map(w => (
                   <Text>
                     <Text dimColor>{w.kind === 'five_hour' ? tr('5 часов ', '5 hours ') : w.kind === 'seven_day' ? tr('неделя ', 'week ') : `${w.kind} `}</Text>
@@ -807,10 +806,9 @@ export const register: Register = on => {
                     {resetIn(w.resetsAt) !== null && <Text dimColor> · {tr('сброс', 'reset')} {resetIn(w.resetsAt)}</Text>}
                   </Text>
                 ))}
-                </Box>
               </Box>
             )}
-            <Box gap={3}>
+            <Box gap={2} flexWrap="wrap">
               {label(tr('Граф', 'Graph'))}
               <Button
                 key="graphify-build"

@@ -261,6 +261,7 @@ async function persist($: EngineInterface, l: Ledger): Promise<void> {
   await $.store.set('lifetime', value)
 }
 
+let lifetimeLoaded = false
 const cache = new Map<string, Advice>()
 
 // Changing model mid-chat re-writes the whole context into the new model's cache, so on a long chat
@@ -616,6 +617,12 @@ export const register: Register = on => {
     const choice = await read($, choiceAtom)
     const isEditing = await read($, editingAtom)
     const limits = await read($, limitsAtom)
+    // Calibration kept from earlier chats; loaded here too because session.start does not run when the mod is hot-loaded.
+    if (!lifetimeLoaded) {
+      lifetimeLoaded = true
+      const kept = (await $.store.get('lifetime')) as Lifetime | null | undefined
+      if (kept) await update($, ledgerAtom, l => ({ ...l, ...kept.cal, life: kept.life }))
+    }
     const ledger = await read($, ledgerAtom)
     // On a subscription the saving reads as limit %, with $ beside it; elsewhere as $.
     const amount = (usd: number) => {
@@ -761,8 +768,9 @@ export const register: Register = on => {
                 <Text>
                   <Text dimColor>{tr('стоимость ', 'cost ')}</Text>
                   <Text bold>${limits.usd.toFixed(2)}</Text>
-                  {limits.windows.length > 0 && asLimitPct(limits.usd, ledger, '5h') !== null && (
-                    <Text dimColor> ≈ {pctText(asLimitPct(limits.usd, ledger, '5h') ?? 0)} {tr('лимита 5ч', 'of 5h limit')}</Text>
+                  {limits.windows.length > 0 && (
+                    <Text dimColor> ≈ {asLimitPct(limits.usd, ledger, '5h') === null ? tr('?% лимита 5ч (идёт замер)', '?% of 5h limit (measuring)') : `${pctText(asLimitPct(limits.usd, ledger, '5h') ?? 0)} ${tr('лимита 5ч', 'of 5h limit')}`}</Text>
+                  )} {tr('лимита 5ч', 'of 5h limit')}</Text>
                   )}
                 </Text>
               )}
